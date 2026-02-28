@@ -1,0 +1,310 @@
+---
+title: useSandbox
+description: React hook for managing sandbox lifecycle and state
+---
+
+The `useSandbox` hook provides a complete interface for creating, monitoring, and managing sandbox environments.
+
+## Hook signature
+
+```typescript
+function useSandbox(): SandboxHookReturn
+```
+
+## Return value
+
+The hook returns an object containing state properties and methods:
+
+<ResponseField name="sandboxId" type="string | null">
+  Unique identifier for the current sandbox, or `null` if no sandbox exists
+</ResponseField>
+
+<ResponseField name="sandboxUrl" type="string | null">
+  Preview URL for accessing the sandbox, or `null` if not available
+</ResponseField>
+
+<ResponseField name="isCreating" type="boolean">
+  Whether a sandbox is currently being created
+</ResponseField>
+
+<ResponseField name="isReady" type="boolean">
+  Whether the sandbox is ready to receive code
+</ResponseField>
+
+<ResponseField name="files" type="Record<string, string>">
+  Map of file paths to their contents in the sandbox
+</ResponseField>
+
+<ResponseField name="error" type="string | null">
+  Error message if an operation failed, or `null` if no error
+</ResponseField>
+
+<ResponseField name="createSandbox" type="() => Promise<{ sandboxId: string; url: string } | null>">
+  Creates a new sandbox instance. Returns sandbox details on success, or `null` on failure.
+</ResponseField>
+
+<ResponseField name="refreshFiles" type="() => Promise<void>">
+  Fetches the current list of files from the sandbox and updates state
+</ResponseField>
+
+<ResponseField name="getStatus" type="() => Promise<StatusResponse | null>">
+  Retrieves the current status of the sandbox, including whether it's alive
+</ResponseField>
+
+<ResponseField name="killSandbox" type="() => Promise<boolean>">
+  Terminates the current sandbox and resets state. Returns `true` on success.
+</ResponseField>
+
+<ResponseField name="reset" type="() => void">
+  Resets the hook state to initial values without making any API calls
+</ResponseField>
+
+## Type definitions
+
+```typescript
+interface SandboxState {
+  sandboxId: string | null;
+  sandboxUrl: string | null;
+  isCreating: boolean;
+  isReady: boolean;
+  files: Record<string, string>;
+  error: string | null;
+}
+
+interface StatusResponse {
+  success: boolean;
+  isAlive?: boolean;
+  sandboxId?: string;
+  url?: string;
+  error?: string;
+}
+```
+
+## Usage examples
+
+### Basic sandbox creation
+
+```tsx
+import { useSandbox } from '@/lib/hooks/use-sandbox';
+
+function SandboxManager() {
+  const sandbox = useSandbox();
+
+  const handleCreate = async () => {
+    const result = await sandbox.createSandbox();
+    
+    if (result) {
+      console.log('Sandbox created:', result.sandboxId);
+      console.log('Preview URL:', result.url);
+    } else {
+      console.error('Failed to create sandbox:', sandbox.error);
+    }
+  };
+
+  return (
+    <div>
+      <button onClick={handleCreate} disabled={sandbox.isCreating}>
+        {sandbox.isCreating ? 'Creating...' : 'Create Sandbox'}
+      </button>
+      
+      {sandbox.isReady && (
+        <div>
+          <p>Sandbox ID: {sandbox.sandboxId}</p>
+          <a href={sandbox.sandboxUrl} target="_blank">
+            Open Preview
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+### Monitoring sandbox files
+
+```tsx
+import { useSandbox } from '@/lib/hooks/use-sandbox';
+import { useEffect } from 'react';
+
+function FileExplorer() {
+  const sandbox = useSandbox();
+
+  useEffect(() => {
+    if (sandbox.isReady) {
+      // Refresh files every 5 seconds
+      const interval = setInterval(() => {
+        sandbox.refreshFiles();
+      }, 5000);
+
+      return () => clearInterval(interval);
+    }
+  }, [sandbox.isReady]);
+
+  return (
+    <div>
+      <h2>Files in Sandbox</h2>
+      <ul>
+        {Object.keys(sandbox.files).map(path => (
+          <li key={path}>{path}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+```
+
+### Checking sandbox status
+
+```tsx
+import { useSandbox } from '@/lib/hooks/use-sandbox';
+
+function StatusMonitor() {
+  const sandbox = useSandbox();
+
+  const checkHealth = async () => {
+    const status = await sandbox.getStatus();
+    
+    if (status?.success) {
+      console.log('Sandbox is alive:', status.isAlive);
+    } else {
+      console.error('Failed to get status');
+    }
+  };
+
+  return (
+    <button onClick={checkHealth}>
+      Check Sandbox Health
+    </button>
+  );
+}
+```
+
+### Cleanup on unmount
+
+```tsx
+import { useSandbox } from '@/lib/hooks/use-sandbox';
+import { useEffect } from 'react';
+
+function AppBuilder() {
+  const sandbox = useSandbox();
+
+  useEffect(() => {
+    // Create sandbox on mount
+    sandbox.createSandbox();
+
+    // Cleanup on unmount
+    return () => {
+      sandbox.killSandbox();
+    };
+  }, []);
+
+  return (
+    <div>
+      {/* Your builder UI */}
+    </div>
+  );
+}
+```
+
+### Complete lifecycle management
+
+```tsx
+import { useSandbox } from '@/lib/hooks/use-sandbox';
+import { useState } from 'react';
+
+function SandboxLifecycle() {
+  const sandbox = useSandbox();
+  const [log, setLog] = useState<string[]>([]);
+
+  const addLog = (message: string) => {
+    setLog(prev => [...prev, `${new Date().toLocaleTimeString()}: ${message}`]);
+  };
+
+  const handleCreate = async () => {
+    addLog('Creating sandbox...');
+    const result = await sandbox.createSandbox();
+    
+    if (result) {
+      addLog(`Sandbox created: ${result.sandboxId}`);
+    } else {
+      addLog(`Failed: ${sandbox.error}`);
+    }
+  };
+
+  const handleRefresh = async () => {
+    addLog('Refreshing files...');
+    await sandbox.refreshFiles();
+    addLog(`Found ${Object.keys(sandbox.files).length} files`);
+  };
+
+  const handleKill = async () => {
+    addLog('Terminating sandbox...');
+    const success = await sandbox.killSandbox();
+    addLog(success ? 'Sandbox terminated' : 'Failed to terminate');
+  };
+
+  return (
+    <div>
+      <div>
+        <button onClick={handleCreate} disabled={sandbox.isCreating}>
+          Create
+        </button>
+        <button onClick={handleRefresh} disabled={!sandbox.isReady}>
+          Refresh Files
+        </button>
+        <button onClick={handleKill} disabled={!sandbox.sandboxId}>
+          Kill
+        </button>
+      </div>
+
+      <div>
+        <h3>Status</h3>
+        <ul>
+          <li>Sandbox ID: {sandbox.sandboxId || 'None'}</li>
+          <li>Ready: {sandbox.isReady ? 'Yes' : 'No'}</li>
+          <li>Files: {Object.keys(sandbox.files).length}</li>
+        </ul>
+      </div>
+
+      <div>
+        <h3>Log</h3>
+        <pre>
+          {log.map((entry, i) => (
+            <div key={i}>{entry}</div>
+          ))}
+        </pre>
+      </div>
+    </div>
+  );
+}
+```
+
+## State management
+
+The hook maintains state internally using React's `useState`. All API calls automatically update the hook's state:
+
+- `createSandbox()` sets `isCreating` during the operation and updates `sandboxId`, `sandboxUrl`, and `isReady` on success
+- `refreshFiles()` updates the `files` map
+- `killSandbox()` resets all state to initial values on success
+- `reset()` immediately clears state without making API calls
+
+## Error handling
+
+Errors are captured in the `error` field. Check this field after operations:
+
+```tsx
+const result = await sandbox.createSandbox();
+
+if (!result) {
+  console.error('Create failed:', sandbox.error);
+}
+```
+
+## Related endpoints
+
+The hook calls these API endpoints:
+
+- [POST /api/sandbox/create](/api/sandbox#post-apisandboxcreate)
+- [GET /api/sandbox/files](/api/sandbox#get-apisandboxfiles)
+- [GET /api/sandbox/status](/api/sandbox#get-apisandboxstatus)
+- [POST /api/sandbox/kill](/api/sandbox#post-apisandboxkill)

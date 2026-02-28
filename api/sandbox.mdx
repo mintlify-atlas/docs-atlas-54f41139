@@ -261,15 +261,76 @@ curl -X POST https://your-domain.com/api/sandbox/kill
 
 ---
 
+## POST /api/packages/install
+
+Installs npm packages in a sandbox.
+
+### Request body
+
+<ParamField body="packages" type="string[]" required>
+  Array of package names to install (e.g., `["react", "lodash"]`)
+</ParamField>
+
+<ParamField body="sandboxId" type="string">
+  The sandbox ID where packages should be installed. If omitted, uses the active sandbox
+</ParamField>
+
+### Response
+
+<ResponseField name="success" type="boolean">
+  Whether the installation succeeded
+</ResponseField>
+
+<ResponseField name="installedPackages" type="string[]">
+  List of successfully installed packages
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if `success` is `false`
+</ResponseField>
+
+### Error codes
+
+<ResponseField name="400" type="Bad Request">
+  Invalid JSON body or empty packages array
+</ResponseField>
+
+<ResponseField name="500" type="Internal Server Error">
+  Failed to install packages
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X POST https://your-domain.com/api/packages/install \
+  -H "Content-Type: application/json" \
+  -d '{
+    "packages": ["react-icons", "framer-motion"],
+    "sandboxId": "sb_abc123"
+  }'
+```
+
+### Example response
+
+```json
+{
+  "success": true,
+  "installedPackages": ["react-icons", "framer-motion"]
+}
+```
+
+---
+
 ## Sandbox lifecycle
 
 A typical sandbox workflow:
 
 1. **Create** a sandbox using `/api/sandbox/create`
 2. **Generate** code with `/api/generate/stream`
-3. **Apply** the code using `/api/apply/stream`
-4. **Check status** via `/api/sandbox/status` to verify it's running
-5. **List files** with `/api/sandbox/files` to inspect contents
-6. **Terminate** when done using `/api/sandbox/kill`
+3. **Apply** the code using `/api/apply/stream` (includes package installation)
+4. **Install additional packages** via `/api/packages/install` if needed
+5. **Check status** via `/api/sandbox/status` to verify it's running
+6. **List files** with `/api/sandbox/files` to inspect contents
+7. **Terminate** when done using `/api/sandbox/kill`
 
 Sandboxes maintain state across requests using the `sandboxId` identifier.

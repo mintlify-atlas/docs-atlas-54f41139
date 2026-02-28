@@ -76,7 +76,8 @@
             "group": "Client Hooks",
             "pages": [
               "api/use-generation",
-              "api/use-voice-agent"
+              "api/use-voice-agent",
+              "api/use-sandbox"
             ]
           }
         ]
