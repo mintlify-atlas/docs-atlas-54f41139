@@ -1,0 +1,92 @@
+{
+  "projectType": "saas",
+  "projectName": "Viber",
+  "projectDescription": "Voice-first coding platform that generates React applications through natural conversation",
+  "theme": "palm",
+  "primaryColor": "#8b5cf6",
+  "lightColor": "#a78bfa",
+  "darkColor": "#7c3aed",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/voice-interaction",
+              "features/code-generation",
+              "features/sandbox-preview",
+              "features/surgical-edits"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/voice-agent",
+              "architecture/code-agent",
+              "architecture/sandbox"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/environment-setup",
+              "guides/deployment",
+              "guides/docker",
+              "guides/customization"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/generate",
+              "api/apply",
+              "api/sandbox",
+              "api/images"
+            ]
+          },
+          {
+            "group": "Client Hooks",
+            "pages": [
+              "api/use-generation",
+              "api/use-voice-agent"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Voice-first coding interface with ElevenLabs integration",
+    "AI-powered code generation using Google Gemini",
+    "Real-time sandbox preview with Daytona",
+    "Surgical code editing for precise modifications",
+    "Agentic tool calling for build actions and navigation",
+    "Image-aware generation with Unsplash integration"
+  ],
+  "publicApiSurface": [
+    "POST /api/generate/stream - Stream code generation",
+    "POST /api/apply/stream - Apply code to sandbox",
+    "POST /api/sandbox/create - Create sandbox workspace",
+    "POST /api/sandbox/diagnostics - Run diagnostics",
+    "GET /images - Fetch images for generated content",
+    "useGeneration() - React hook for code generation",
+    "useVoiceAgentControls() - React hook for voice control",
+    "VoiceAgent - Voice interaction component"
+  ]
+}
