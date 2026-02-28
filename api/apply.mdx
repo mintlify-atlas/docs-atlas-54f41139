@@ -1,0 +1,193 @@
+---
+title: Apply code
+description: Apply generated code and install packages to a sandbox
+---
+
+## POST /api/apply/stream
+
+Applies generated files to a sandbox and installs required npm packages. Returns a server-sent events (SSE) stream with progress updates.
+
+### Request body
+
+<ParamField body="sandboxId" type="string">
+  The target sandbox ID. If not provided, operations apply to the active sandbox
+</ParamField>
+
+<ParamField body="files" type="array" required>
+  Array of files to apply to the sandbox
+  
+  <Expandable title="file object">
+    <ParamField body="path" type="string" required>
+      File path relative to the sandbox root (e.g., "src/App.tsx")
+    </ParamField>
+    
+    <ParamField body="content" type="string" required>
+      Complete file contents as a string
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="packages" type="array">
+  Array of npm package names to install (e.g., `["react-router-dom", "axios"]`)
+</ParamField>
+
+### Response
+
+Returns a server-sent events (SSE) stream with `Content-Type: text/event-stream`. Events are sent as JSON objects prefixed with `data: `.
+
+#### Stream event types
+
+<ResponseField name="status" type="object">
+  Progress updates during the apply operation
+  
+  <Expandable title="properties">
+    <ResponseField name="type" type="string">
+      Always "status"
+    </ResponseField>
+    
+    <ResponseField name="message" type="string">
+      Human-readable status message (e.g., "Installing packages...", "Applying 3/5: Button.tsx")
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="package" type="object">
+  Emitted for each successfully installed package
+  
+  <Expandable title="properties">
+    <ResponseField name="type" type="string">
+      Always "package"
+    </ResponseField>
+    
+    <ResponseField name="data" type="object">
+      <Expandable title="properties">
+        <ResponseField name="name" type="string">
+          The installed package name
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="file" type="object">
+  Emitted for each successfully applied file
+  
+  <Expandable title="properties">
+    <ResponseField name="type" type="string">
+      Always "file"
+    </ResponseField>
+    
+    <ResponseField name="data" type="object">
+      <Expandable title="properties">
+        <ResponseField name="path" type="string">
+          The file path that was applied
+        </ResponseField>
+        
+        <ResponseField name="status" type="string">
+          Always "applied"
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="complete" type="object">
+  Final event indicating the operation is complete
+  
+  <Expandable title="properties">
+    <ResponseField name="type" type="string">
+      Always "complete"
+    </ResponseField>
+    
+    <ResponseField name="data" type="object">
+      <Expandable title="properties">
+        <ResponseField name="appliedFiles" type="array">
+          Array of file paths that were successfully applied
+        </ResponseField>
+        
+        <ResponseField name="installedPackages" type="array">
+          Array of package names that were installed
+        </ResponseField>
+        
+        <ResponseField name="success" type="boolean">
+          Whether the entire operation succeeded
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="error" type="object">
+  Error event if the operation fails
+  
+  <Expandable title="properties">
+    <ResponseField name="type" type="string">
+      Always "error"
+    </ResponseField>
+    
+    <ResponseField name="message" type="string">
+      Error description (e.g., "Failed to install packages: Network timeout")
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Error codes
+
+<ResponseField name="400" type="Bad Request">
+  Invalid JSON body or missing/empty `files` array
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X POST https://your-domain.com/api/apply/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sandboxId": "sb_abc123",
+    "files": [
+      {
+        "path": "src/components/Button.tsx",
+        "content": "export default function Button() { return <button>Click me</button>; }"
+      },
+      {
+        "path": "src/App.tsx",
+        "content": "import Button from './components/Button';\n\nexport default function App() { return <Button />; }"
+      }
+    ],
+    "packages": ["react", "react-dom"]
+  }'
+```
+
+### Example SSE response
+
+```text
+data: {"type":"status","message":"Installing packages..."}
+
+data: {"type":"status","message":"Installing 2 package(s)..."}
+
+data: {"type":"package","data":{"name":"react"}}
+
+data: {"type":"package","data":{"name":"react-dom"}}
+
+data: {"type":"status","message":"Applying 2 file(s)..."}
+
+data: {"type":"status","message":"Applying 1/2: Button.tsx"}
+
+data: {"type":"file","data":{"path":"src/components/Button.tsx","status":"applied"}}
+
+data: {"type":"status","message":"Applying 2/2: App.tsx"}
+
+data: {"type":"file","data":{"path":"src/App.tsx","status":"applied"}}
+
+data: {"type":"complete","data":{"appliedFiles":["src/components/Button.tsx","src/App.tsx"],"installedPackages":["react","react-dom"],"success":true}}
+```
+
+### Operation order
+
+The apply endpoint executes operations in this order:
+
+1. Install packages (if provided)
+2. Apply files to the sandbox with progress callbacks
+3. Emit completion event with summary
+
+Package installation failures are reported but do not halt file application.

@@ -1,0 +1,307 @@
+---
+title: Voice interaction
+description: Build with natural voice commands using ElevenLabs conversational AI
+---
+
+Viber's voice-first interface lets you code naturally by speaking. Powered by ElevenLabs conversational AI, you can create and edit applications entirely through voice commands.
+
+## How it works
+
+Viber uses the ElevenLabs Conversational AI SDK to establish a WebSocket connection between your browser and their AI agent. The agent understands natural language commands and translates them into code generation requests.
+
+### Voice agent architecture
+
+The `VoiceAgent` component manages the connection lifecycle and tool calling:
+
+```tsx src/components/builder/voice/voice-agent.tsx
+import { useConversation } from "@elevenlabs/react";
+
+const conversation = useConversation({
+  clientTools: {
+    vibe_build: async ({ prompt, action }: VibeBuildParams) => {
+      // Translates voice commands to code generation
+      await onGenerate({
+        prompt,
+        isEdit: action === "edit",
+        sandboxId: sandboxIdRef.current,
+      });
+      return "Starting to make those changes now.";
+    },
+    
+    navigate_ui: ({ panel }: NavigateUiParams) => {
+      // Allows voice control of UI panels
+      const result = onNavigate(panel);
+      return result.message;
+    },
+  },
+  
+  onConnect: () => {
+    onStatusChange("connected");
+  },
+  
+  onMessage: (message) => {
+    if (message.message && message.source !== "user") {
+      onMessage({
+        role: "assistant",
+        content: message.message,
+        timestamp: new Date(),
+      });
+    }
+  },
+});
+```
+
+<Info>
+The voice agent uses **client-side tool calling** to execute actions directly in the browser without server round-trips for UI operations.
+</Info>
+
+### Connection management
+
+The voice connection is managed through a global control API:
+
+```tsx src/components/builder/voice/voice-agent.tsx
+export function useVoiceAgentControls() {
+  return {
+    sendSystemUpdate: (message: string) => {
+      globalVoiceAgent?.sendSystemUpdate(message);
+    },
+    startSession: async () => {
+      await globalVoiceAgent?.startSession();
+    },
+    endSession: () => {
+      globalVoiceAgent?.endSession();
+    },
+    getInputVolume: () => {
+      return globalVoiceAgent?.getInputVolume() ?? 0;
+    },
+    getOutputVolume: () => {
+      return globalVoiceAgent?.getOutputVolume() ?? 0;
+    },
+  };
+}
+```
+
+## Voice UI components
+
+### Voice controls
+
+The voice interface provides visual feedback for connection state:
+
+```tsx src/components/builder/voice/voice-controls.tsx
+export function VoiceControls({
+  status,
+  isMuted,
+  onConnect,
+  onDisconnect,
+  onToggleMute,
+}: VoiceControlsProps) {
+  const isConnected = status === "connected";
+  const isConnecting = status === "connecting";
+
+  return (
+    <div className="flex items-center justify-center gap-3">
+      {isConnected && (
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onToggleMute}
+          className={cn(
+            "rounded-full size-12",
+            isMuted && "text-destructive"
+          )}
+        >
+          {isMuted ? <MicrophoneSlashIcon /> : <MicrophoneIcon />}
+        </Button>
+      )}
+
+      <Button
+        variant="default"
+        size="icon"
+        onClick={isConnected ? onDisconnect : onConnect}
+        disabled={isConnecting}
+        className={cn(
+          "rounded-full size-14",
+          isConnected
+            ? "bg-[#FF3B30] hover:bg-[#FF3B30]/90"
+            : "bg-primary hover:bg-primary/90"
+        )}
+      >
+        {isConnecting ? <Spinner /> : <PhoneIcon />}
+      </Button>
+    </div>
+  );
+}
+```
+
+### Visual feedback
+
+Viber provides rich visual feedback during voice interaction:
+
+<Tabs>
+  <Tab title="Audio Orb">
+    The `Orb` component visualizes audio input/output levels with a dynamic, animated orb that responds to voice activity.
+
+    ```tsx
+    <Orb
+      className="w-full h-full"
+      colors={["#FFF8F2", "#FF8C42"]}
+      getInputVolume={voiceControls.getInputVolume}
+      getOutputVolume={voiceControls.getOutputVolume}
+      agentState={getAgentState()}
+    />
+    ```
+  </Tab>
+  
+  <Tab title="Bar Visualizer">
+    The `BarVisualizer` shows system state with animated bars at the bottom of the sidebar:
+
+    ```tsx
+    <BarVisualizer
+      state={getVisualizerState()}
+      barCount={36}
+      minHeight={8}
+      maxHeight={100}
+      className="h-24"
+    />
+    ```
+  </Tab>
+</Tabs>
+
+## Agentic tool calling
+
+Viber's voice agent can execute two primary tools:
+
+### vibe_build tool
+
+Generates or edits code based on voice commands:
+
+<CodeGroup>
+```tsx Voice Command → Code Generation
+vibe_build: async ({ prompt, action }: VibeBuildParams) => {
+  // action: "create" | "edit"
+  const isEdit = action === "edit";
+  
+  if (isEdit && !sandboxIdRef.current) {
+    return "Error: No sandbox available. Please create a project first.";
+  }
+  
+  await onGenerateRef.current({
+    prompt,
+    isEdit,
+    sandboxId: sandboxIdRef.current,
+  });
+  
+  return isEdit 
+    ? "Starting to make those changes now."
+    : "Generation started successfully.";
+}
+```
+
+```tsx Example Usage
+// User says: "Create a landing page with a hero section"
+// → Calls vibe_build with action="create"
+
+// User says: "Make the header background blue"
+// → Calls vibe_build with action="edit"
+```
+</CodeGroup>
+
+### navigate_ui tool
+
+Controls the UI panels through voice:
+
+```tsx
+navigate_ui: ({ panel }: NavigateUiParams) => {
+  // panel: "preview" | "code" | "files"
+  const result = onNavigate(panel);
+  return result.message;
+}
+```
+
+<Tip>
+The agent automatically determines whether to create new code or edit existing code based on context and conversation history.
+</Tip>
+
+## System updates
+
+Viber sends real-time progress updates to the voice agent during code generation:
+
+```tsx
+const voiceControls = useVoiceAgentControls();
+
+// Send updates during generation
+voiceControls.sendSystemUpdate("Generating Hero component...");
+voiceControls.sendSystemUpdate("Installing dependencies...");
+voiceControls.sendSystemUpdate("Code applied successfully!");
+```
+
+These updates are prefixed with `[UPDATE]` and the agent speaks them back to provide audio feedback on progress.
+
+## Connection lifecycle
+
+<Steps>
+  <Step title="Initialize connection">
+    User clicks the phone icon to start a voice session.
+    
+    ```tsx
+    await conversation.startSession({
+      agentId: AGENT_ID,
+      connectionType: "websocket",
+    });
+    ```
+  </Step>
+  
+  <Step title="WebSocket established">
+    ElevenLabs establishes a WebSocket connection for real-time bidirectional audio streaming.
+  </Step>
+  
+  <Step title="Voice interaction">
+    User speaks naturally, agent responds and calls tools when appropriate.
+  </Step>
+  
+  <Step title="End session">
+    User clicks the red phone icon to disconnect.
+    
+    ```tsx
+    conversation.endSession();
+    ```
+  </Step>
+</Steps>
+
+## Best practices
+
+<CardGroup cols={2}>
+  <Card title="Clear commands" icon="microphone">
+    Speak clearly and use specific language: "Make the header blue" rather than "change that thing."
+  </Card>
+  
+  <Card title="Wait for feedback" icon="clock">
+    Let the agent confirm understanding before issuing the next command.
+  </Card>
+  
+  <Card title="Edit vs create" icon="pencil">
+    The agent determines context automatically, but you can be explicit: "Edit the hero" vs "Create a new footer."
+  </Card>
+  
+  <Card title="Check the preview" icon="eye">
+    Use voice to navigate: "Show me the preview" or "Switch to code view."
+  </Card>
+</CardGroup>
+
+## Configuration
+
+Voice interaction requires an ElevenLabs agent ID:
+
+```tsx src/components/builder/voice/voice-agent.tsx
+const AGENT_ID = clientEnv.ELEVENLABS_AGENT_ID;
+```
+
+Set this in your environment:
+
+```bash .env
+ELEVENLABS_AGENT_ID=your_agent_id_here
+```
+
+<Note>
+The agent must be configured with the `vibe_build` and `navigate_ui` tools in the ElevenLabs dashboard for Viber to function correctly.
+</Note>

@@ -1,0 +1,271 @@
+---
+title: Generate code
+description: Stream AI-generated code based on user prompts
+---
+
+## POST /api/generate/stream
+
+Generates code using AI based on a user prompt. Supports both creating new code and editing existing files with intelligent file selection.
+
+### Request body
+
+<ParamField body="prompt" type="string" required>
+  The user's code generation request or instruction
+</ParamField>
+
+<ParamField body="isEdit" type="boolean">
+  Whether this is an edit operation on existing code. Defaults to `false`
+</ParamField>
+
+<ParamField body="sandboxId" type="string">
+  The sandbox ID to operate on. Required when `isEdit` is `true`
+</ParamField>
+
+<ParamField body="context" type="object">
+  Additional context for code generation
+  
+  <Expandable title="properties">
+    <ParamField body="files" type="object">
+      Record of file paths to their contents. Keys are file paths, values are file contents as strings
+    </ParamField>
+    
+    <ParamField body="manifest" type="object">
+      Package manifest information (e.g., package.json)
+    </ParamField>
+    
+    <ParamField body="recentMessages" type="array">
+      Array of recent conversation messages for context
+      
+      <Expandable title="message">
+        <ResponseField name="role" type="string">
+          Either "user" or "assistant"
+        </ResponseField>
+        
+        <ResponseField name="content" type="string">
+          The message content
+        </ResponseField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="conversationId" type="string">
+  Optional conversation ID for tracking multi-turn interactions
+</ParamField>
+
+### Response
+
+Returns a server-sent events (SSE) stream with `Content-Type: text/event-stream`. Events are sent as JSON objects prefixed with `data: `.
+
+#### Stream event types
+
+<ResponseField name="heartbeat" type="object">
+  Sent every 5 seconds to prevent connection timeout
+  
+  <Expandable title="properties">
+    <ResponseField name="type" type="string">
+      Always "heartbeat"
+    </ResponseField>
+    
+    <ResponseField name="message" type="string">
+      Status message, typically "Generating..."
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="status" type="object">
+  Progress updates during generation
+  
+  <Expandable title="properties">
+    <ResponseField name="type" type="string">
+      Always "status"
+    </ResponseField>
+    
+    <ResponseField name="message" type="string">
+      Human-readable status message
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="stream" type="object">
+  Incremental chunks of generated content
+  
+  <Expandable title="properties">
+    <ResponseField name="type" type="string">
+      Always "stream"
+    </ResponseField>
+    
+    <ResponseField name="data" type="object">
+      <Expandable title="properties">
+        <ResponseField name="content" type="string">
+          The text content chunk
+        </ResponseField>
+        
+        <ResponseField name="index" type="number">
+          Sequential index of this chunk
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="file" type="object">
+  A complete generated file
+  
+  <Expandable title="properties">
+    <ResponseField name="type" type="string">
+      Always "file"
+    </ResponseField>
+    
+    <ResponseField name="data" type="object">
+      <Expandable title="properties">
+        <ResponseField name="path" type="string">
+          File path relative to project root
+        </ResponseField>
+        
+        <ResponseField name="content" type="string">
+          Complete file contents
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="package" type="object">
+  A required npm package
+  
+  <Expandable title="properties">
+    <ResponseField name="type" type="string">
+      Always "package"
+    </ResponseField>
+    
+    <ResponseField name="data" type="object">
+      <Expandable title="properties">
+        <ResponseField name="name" type="string">
+          Package name (e.g., "react-router-dom")
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="complete" type="object">
+  Final event indicating generation is complete
+  
+  <Expandable title="properties">
+    <ResponseField name="type" type="string">
+      Always "complete"
+    </ResponseField>
+    
+    <ResponseField name="data" type="object">
+      <Expandable title="properties">
+        <ResponseField name="files" type="array">
+          Array of all generated files with `path` and `content`
+        </ResponseField>
+        
+        <ResponseField name="packages" type="array">
+          Array of required package names as strings
+        </ResponseField>
+        
+        <ResponseField name="editType" type="string">
+          Type of edit performed (if applicable)
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="error" type="object">
+  Error event if generation fails
+  
+  <Expandable title="properties">
+    <ResponseField name="type" type="string">
+      Always "error"
+    </ResponseField>
+    
+    <ResponseField name="message" type="string">
+      Error description
+    </ResponseField>
+    
+    <ResponseField name="data" type="object">
+      <Expandable title="properties">
+        <ResponseField name="code" type="string">
+          Optional error code
+        </ResponseField>
+        
+        <ResponseField name="details" type="string">
+          Additional error details
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Error codes
+
+<ResponseField name="400" type="Bad Request">
+  Invalid JSON body or missing required `prompt` field
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X POST https://your-domain.com/api/generate/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Create a React counter component with increment and decrement buttons",
+    "isEdit": false
+  }'
+```
+
+### Example with context
+
+```bash
+curl -X POST https://your-domain.com/api/generate/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Add a reset button to the counter",
+    "isEdit": true,
+    "sandboxId": "sb_abc123",
+    "context": {
+      "files": {
+        "src/Counter.tsx": "export default function Counter() { ... }"
+      },
+      "recentMessages": [
+        {
+          "role": "user",
+          "content": "Create a counter component"
+        },
+        {
+          "role": "assistant",
+          "content": "I created a Counter component with increment and decrement."
+        }
+      ]
+    }
+  }'
+```
+
+### Example SSE response
+
+```text
+data: {"type":"status","message":"Analyzing request..."}
+
+data: {"type":"stream","data":{"content":"Creating Counter component","index":0}}
+
+data: {"type":"file","data":{"path":"src/Counter.tsx","content":"import { useState } from 'react';\n\nexport default function Counter() { ... }"}}
+
+data: {"type":"package","data":{"name":"react"}}
+
+data: {"type":"complete","data":{"files":[{"path":"src/Counter.tsx","content":"..."}],"packages":["react"]}}
+```
+
+### Smart file selection
+
+When `isEdit` is `true` and `sandboxId` is provided without explicit `context.files`, the endpoint automatically:
+
+1. Retrieves the sandbox file list
+2. Uses LLM-based intent analysis to identify relevant files
+3. Fetches only the targeted file contents
+4. Falls back to `App.tsx`/`App.jsx` if no files are selected
+
+This ensures efficient context usage while maintaining high edit accuracy.

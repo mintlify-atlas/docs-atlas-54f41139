@@ -1,0 +1,614 @@
+---
+title: Surgical edits
+description: Context-aware code editing that preserves 99% of unchanged code
+---
+
+Viber's surgical edit system makes precise changes to existing code while preserving all unmodified content. Unlike regenerating entire files, surgical edits update only what's necessary.
+
+## How surgical edits work
+
+Surgical editing is enabled by Viber's component-based architecture combined with context-aware AI prompting:
+
+<Steps>
+  <Step title="User requests edit">
+    User says: "Make the header background blue"
+  </Step>
+  
+  <Step title="Identify target files">
+    Viber determines which file(s) need editing:
+    - "header" → `src/components/Header.tsx`
+    - "hero" → `src/components/Hero.tsx`
+    - "footer" → `src/components/Footer.tsx`
+  </Step>
+  
+  <Step title="Read current content">
+    Viber reads the current file contents from the sandbox:
+    
+    ```tsx
+    const fileContents = await getSandboxFileContents([
+      "src/components/Header.tsx"
+    ], sandboxId);
+    ```
+  </Step>
+  
+  <Step title="Generate with context">
+    AI receives the edit prompt PLUS current file contents:
+    
+    ```tsx
+    const systemPrompt = buildSystemPrompt(true, fileContents);
+    ```
+  </Step>
+  
+  <Step title="AI makes surgical change">
+    AI outputs the COMPLETE file with ONLY the requested change:
+    
+    ```tsx
+    <file path="src/components/Header.tsx">
+    // Same imports
+    // Same structure
+    // Changed: bg-gray-900 → bg-blue-500
+    // Everything else preserved
+    </file>
+    ```
+  </Step>
+  
+  <Step title="Apply to sandbox">
+    Updated file overwrites the old version, HMR updates preview instantly.
+  </Step>
+</Steps>
+
+## Component-based architecture
+
+Surgical edits rely on breaking apps into separate component files:
+
+<CodeGroup>
+```tsx ✅ Good: Modular components
+// src/App.tsx
+import Header from "./components/Header";
+import Hero from "./components/Hero";
+import Features from "./components/Features";
+
+function App() {
+  return (
+    <div>
+      <Header />
+      <Hero />
+      <Features />
+    </div>
+  );
+}
+```
+
+```tsx ❌ Bad: Monolithic component
+// src/App.tsx (everything in one file)
+function App() {
+  return (
+    <div>
+      {/* Header section - 50 lines */}
+      <header className="bg-gray-900">...</header>
+      
+      {/* Hero section - 80 lines */}
+      <section className="hero">...</section>
+      
+      {/* Features section - 120 lines */}
+      <section className="features">...</section>
+    </div>
+  );
+}
+```
+</CodeGroup>
+
+<Info>
+**Why modular?** If header is in `Header.tsx`, editing the header only touches that one file. If everything is in `App.tsx`, editing the header requires regenerating the entire app.
+</Info>
+
+## Edit mode prompt
+
+The AI receives special instructions for surgical editing:
+
+```txt src/lib/ai/prompts.ts
+KEY PRINCIPLES (CRITICAL):
+1. **Minimal Changes**: Only modify what's necessary - preserve 99% of existing code
+2. **Preserve Functionality**: Keep all existing features, imports, and structure
+3. **Respect Structure**: Follow existing patterns and code style
+4. **Target Precision**: Edit specific files/components, not everything
+5. **Context Awareness**: Use imports/exports to understand component relationships
+
+EDIT STRATEGY EXAMPLES:
+
+### Example 1: Update Single Style (CRITICAL)
+USER: "update the hero to bg blue"
+
+CORRECT APPROACH:
+1. Identify Hero component: src/components/Hero.tsx
+2. Locate the background color class (e.g., 'bg-gray-900')
+3. Replace ONLY that class with 'bg-blue-500'
+4. Return the ENTIRE file unchanged except for that single class
+
+INCORRECT APPROACH:
+- Regenerating entire file
+- Changing other styles
+- Reformatting or "improving" code
+- Modifying unrelated components
+```
+
+<Tip>
+The prompt explicitly shows the AI what NOT to do, preventing over-eager "improvements" that break existing code.
+</Tip>
+
+## File context injection
+
+Viber injects current file contents into the AI prompt:
+
+```tsx src/lib/ai/prompts.ts
+export function buildSystemPrompt(
+  isEdit: boolean,
+  fileContext?: Record<string, string>
+): string {
+  let prompt = isEdit ? EDIT_MODE_PROMPT : INITIAL_GENERATION_PROMPT;
+  
+  if (fileContext && Object.keys(fileContext).length > 0) {
+    prompt += FILE_CONTEXT_PROMPT;
+    for (const [path, content] of Object.entries(fileContext)) {
+      if (content.length < 5000) {
+        prompt += `\n<file path="${path}">\n${content}\n</file>\n`;
+      } else {
+        prompt += `\n<file path="${path}">[File too large - ${content.length} chars]</file>\n`;
+      }
+    }
+  }
+  
+  return prompt;
+}
+```
+
+This gives the AI:
+- The exact current state of each file
+- All imports and dependencies
+- Existing code structure and style
+- Context about what should NOT change
+
+## Edit examples
+
+### Example 1: Style change
+
+<Tabs>
+  <Tab title="User request">
+    "Make the header background blue"
+  </Tab>
+  
+  <Tab title="Before">
+    ```tsx src/components/Header.tsx
+    import { Menu } from "lucide-react";
+    
+    export default function Header() {
+      return (
+        <header className="bg-gray-900 text-white px-6 py-4">
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold">My App</h1>
+            <button>
+              <Menu className="size-6" />
+            </button>
+          </div>
+        </header>
+      );
+    }
+    ```
+  </Tab>
+  
+  <Tab title="After">
+    ```tsx src/components/Header.tsx
+    import { Menu } from "lucide-react";
+    
+    export default function Header() {
+      return (
+        <header className="bg-blue-600 text-white px-6 py-4">
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold">My App</h1>
+            <button>
+              <Menu className="size-6" />
+            </button>
+          </div>
+        </header>
+      );
+    }
+    ```
+    
+    **Changed:** `bg-gray-900` → `bg-blue-600`
+    
+    **Preserved:** Imports, structure, text, all other styles
+  </Tab>
+</Tabs>
+
+### Example 2: Add element
+
+<Tabs>
+  <Tab title="User request">
+    "Add a search bar to the header"
+  </Tab>
+  
+  <Tab title="Before">
+    ```tsx src/components/Header.tsx
+    import { Menu } from "lucide-react";
+    
+    export default function Header() {
+      return (
+        <header className="bg-gray-900 text-white px-6 py-4">
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold">My App</h1>
+            <button>
+              <Menu className="size-6" />
+            </button>
+          </div>
+        </header>
+      );
+    }
+    ```
+  </Tab>
+  
+  <Tab title="After">
+    ```tsx src/components/Header.tsx
+    import { Menu, Search } from "lucide-react";
+    
+    export default function Header() {
+      return (
+        <header className="bg-gray-900 text-white px-6 py-4">
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold">My App</h1>
+            <div className="flex items-center gap-4">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Search..."
+                  className="bg-gray-800 text-white px-4 py-2 pr-10 rounded-lg"
+                />
+                <Search className="size-5 absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              </div>
+              <button>
+                <Menu className="size-6" />
+              </button>
+            </div>
+          </div>
+        </header>
+      );
+    }
+    ```
+    
+    **Changed:**
+    - Added `Search` to imports
+    - Added search input with icon
+    - Wrapped button in flex container
+    
+    **Preserved:** Header structure, branding, menu button, all styles
+  </Tab>
+</Tabs>
+
+### Example 3: Remove element
+
+<Tabs>
+  <Tab title="User request">
+    "Remove the menu button from the header"
+  </Tab>
+  
+  <Tab title="Before">
+    ```tsx src/components/Header.tsx
+    import { Menu } from "lucide-react";
+    
+    export default function Header() {
+      return (
+        <header className="bg-gray-900 text-white px-6 py-4">
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold">My App</h1>
+            <button>
+              <Menu className="size-6" />
+            </button>
+          </div>
+        </header>
+      );
+    }
+    ```
+  </Tab>
+  
+  <Tab title="After">
+    ```tsx src/components/Header.tsx
+    export default function Header() {
+      return (
+        <header className="bg-gray-900 text-white px-6 py-4">
+          <div className="flex items-center">
+            <h1 className="text-2xl font-bold">My App</h1>
+          </div>
+        </header>
+      );
+    }
+    ```
+    
+    **Changed:**
+    - Removed `Menu` import (unused)
+    - Removed button element
+    - Simplified flex container
+    
+    **Preserved:** Header structure, branding, styles
+  </Tab>
+</Tabs>
+
+## File identification
+
+Viber maps user intent to specific files:
+
+<CardGroup cols={2}>
+  <Card title="header" icon="heading">
+    → `src/components/Header.tsx`
+  </Card>
+  
+  <Card title="navigation / nav" icon="bars">
+    → `src/components/Nav.tsx` or `Header.tsx`
+  </Card>
+  
+  <Card title="hero" icon="star">
+    → `src/components/Hero.tsx`
+  </Card>
+  
+  <Card title="footer" icon="shoe-prints">
+    → `src/components/Footer.tsx`
+  </Card>
+  
+  <Card title="features" icon="grid">
+    → `src/components/Features.tsx`
+  </Card>
+  
+  <Card title="testimonials" icon="quote">
+    → `src/components/Testimonials.tsx`
+  </Card>
+  
+  <Card title="about" icon="info">
+    → `src/components/About.tsx`
+  </Card>
+  
+  <Card title="global styles" icon="paintbrush">
+    → `src/index.css`
+  </Card>
+</CardGroup>
+
+<Note>
+If the file doesn't exist (e.g., no `Testimonials.tsx`), the AI may create it or suggest it can't find the component.
+</Note>
+
+## Reading sandbox files
+
+Before editing, Viber fetches current file contents:
+
+```tsx
+// In generation flow
+if (isEdit && sandboxId) {
+  const fileList = await getSandboxFileList(sandboxId);
+  
+  // Read all .tsx and .ts files for context
+  const relevantFiles = fileList.filter(f => 
+    f.endsWith(".tsx") || f.endsWith(".ts")
+  );
+  
+  const fileContext = await getSandboxFileContents(
+    relevantFiles,
+    sandboxId
+  );
+  
+  // Pass to AI
+  await generateCode({
+    prompt,
+    isEdit: true,
+    fileContext: fileContext.files,
+  });
+}
+```
+
+This ensures the AI sees the current state before making changes.
+
+## Preserving imports
+
+One critical aspect of surgical edits is import hygiene:
+
+<Accordion title="Import handling examples">
+<CodeGroup>
+```tsx ✅ Good: Update imports when adding elements
+// Before
+import { Menu } from "lucide-react";
+
+// After (added Search icon)
+import { Menu, Search } from "lucide-react";
+```
+
+```tsx ✅ Good: Remove unused imports
+// Before
+import { Menu, Search } from "lucide-react";
+
+// After (removed Search)
+import { Menu } from "lucide-react";
+```
+
+```tsx ❌ Bad: Missing import
+// Before
+import { Menu } from "lucide-react";
+
+// After (forgot to import Search!)
+import { Menu } from "lucide-react";
+
+// Uses Search icon without importing - BREAKS!
+<Search className="size-5" />
+```
+</CodeGroup>
+</Accordion>
+
+<Tip>
+Viber's prompts explicitly remind the AI: "IMPORT HYGIENE: When adding new elements, add corresponding imports at the top."
+</Tip>
+
+## Multi-file edits
+
+Some edits require changing multiple files:
+
+<Accordion title="Example: Add new component to existing page">
+**User:** "Add a newsletter signup to the footer"
+
+**AI outputs:**
+
+```tsx
+<file path="src/components/Newsletter.tsx">
+// New component
+export default function Newsletter() {
+  return (
+    <div className="bg-gray-100 p-6 rounded-lg">
+      <h3 className="text-xl font-bold mb-2">Subscribe to our newsletter</h3>
+      <input type="email" placeholder="Your email" />
+      <button>Subscribe</button>
+    </div>
+  );
+}
+</file>
+
+<file path="src/components/Footer.tsx">
+import Newsletter from "./Newsletter";
+
+// ... existing Footer code ...
+// Added Newsletter component inside Footer
+</file>
+```
+
+**Result:** Newsletter.tsx created, Footer.tsx updated to import and render it.
+</Accordion>
+
+## Edge cases
+
+<AccordionGroup>
+  <Accordion title="Non-existent file">
+    If user asks to edit a file that doesn't exist:
+    
+    ```
+    User: "Update the pricing section"
+    ```
+    
+    If `Pricing.tsx` doesn't exist, AI may:
+    - Create it from scratch
+    - Explain it doesn't exist
+    - Ask for clarification
+  </Accordion>
+  
+  <Accordion title="Ambiguous request">
+    If the request is unclear:
+    
+    ```
+    User: "Change the color"
+    ```
+    
+    AI may:
+    - Ask which component
+    - Ask which color (text, background, border)
+    - Make a best guess based on recent context
+  </Accordion>
+  
+  <Accordion title="Large refactor">
+    If the request requires major changes:
+    
+    ```
+    User: "Rebuild the entire header with a new design"
+    ```
+    
+    This becomes a full regeneration, not a surgical edit. The AI recreates `Header.tsx` from scratch.
+  </Accordion>
+</AccordionGroup>
+
+## Limitations
+
+<Warning>
+**File size limits:** Files larger than 5000 characters are truncated when passed to the AI. For very large files, surgical edits may not have full context.
+</Warning>
+
+<Warning>
+**Token limits:** If the project has many files, not all can fit in the context window. Viber prioritizes relevant files based on the edit request.
+</Warning>
+
+<Warning>
+**Complexity:** Very complex edits (e.g., "Refactor to use a different state management library") may require manual intervention.
+</Warning>
+
+## Best practices
+
+<CardGroup cols={2}>
+  <Card title="Be specific" icon="bullseye">
+    "Make the header background blue" is better than "Change the header."
+  </Card>
+  
+  <Card title="Reference components" icon="file">
+    Use component names: "Edit the Hero" instead of "Change the top section."
+  </Card>
+  
+  <Card title="One change at a time" icon="list-ol">
+    "Make the header blue, add a search bar, and remove the logo" is harder than 3 separate requests.
+  </Card>
+  
+  <Card title="Check the preview" icon="eye">
+    After each edit, verify the change looks correct before the next edit.
+  </Card>
+  
+  <Card title="Use voice naturally" icon="microphone">
+    Voice interaction handles context better. Say: "Now make it darker" after "Make the header blue."
+  </Card>
+  
+  <Card title="Modular structure" icon="grid">
+    Keep components small and focused. Easier to edit `Hero.tsx` than a 500-line `App.tsx`.
+  </Card>
+</CardGroup>
+
+## Debugging failed edits
+
+If an edit doesn't work as expected:
+
+<Steps>
+  <Step title="Check the code view">
+    Look at the generated code to see what actually changed.
+  </Step>
+  
+  <Step title="Look for console errors">
+    Open browser DevTools to check for import errors or runtime errors.
+  </Step>
+  
+  <Step title="Try a more specific prompt">
+    Rephrase: "Change the background of the header to blue-600" instead of "Make it blue."
+  </Step>
+  
+  <Step title="Regenerate if needed">
+    Say: "Rebuild the header component" to start fresh.
+  </Step>
+</Steps>
+
+## Comparing to full regeneration
+
+<Tabs>
+  <Tab title="Surgical edit">
+    **Pros:**
+    - Fast (only edits one file)
+    - Preserves all unchanged code
+    - Maintains user customizations
+    - Less prone to introducing bugs
+    
+    **Cons:**
+    - May not handle large refactors well
+    - Requires good component modularity
+  </Tab>
+  
+  <Tab title="Full regeneration">
+    **Pros:**
+    - Can handle complex redesigns
+    - Fresh start if code is broken
+    - AI has full creative freedom
+    
+    **Cons:**
+    - Slow (regenerates all files)
+    - Loses user customizations
+    - May introduce new bugs
+    - More token usage
+  </Tab>
+</Tabs>
+
+<Tip>
+Viber defaults to surgical edits whenever possible. Say "start over" or "rebuild everything" to force full regeneration.
+</Tip>

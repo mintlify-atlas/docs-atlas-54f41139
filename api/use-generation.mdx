@@ -1,0 +1,434 @@
+---
+title: useGeneration
+description: React hook for managing AI code generation with streaming support
+---
+
+The `useGeneration` hook provides a complete interface for generating, applying, and managing AI-generated code with real-time streaming updates.
+
+## Hook signature
+
+```typescript
+function useGeneration(): GenerationHookReturn
+```
+
+## Return value
+
+The hook returns an object containing state properties and methods:
+
+<ResponseField name="isGenerating" type="boolean">
+  Whether code generation is currently in progress
+</ResponseField>
+
+<ResponseField name="isApplying" type="boolean">
+  Whether generated code is being applied to the sandbox
+</ResponseField>
+
+<ResponseField name="isChecking" type="boolean">
+  Whether diagnostics are currently running
+</ResponseField>
+
+<ResponseField name="isStreaming" type="boolean">
+  Whether code is actively streaming from the AI
+</ResponseField>
+
+<ResponseField name="progress" type="string">
+  Current progress message describing the generation state
+</ResponseField>
+
+<ResponseField name="streamedCode" type="string">
+  Accumulated streamed code content
+</ResponseField>
+
+<ResponseField name="currentFile" type="StreamingFile | null">
+  The file currently being streamed (incomplete)
+</ResponseField>
+
+<ResponseField name="files" type="GeneratedFile[]">
+  Array of completed generated files
+</ResponseField>
+
+<ResponseField name="streamingFiles" type="StreamingFile[]">
+  Array of files that have been streamed and completed
+</ResponseField>
+
+<ResponseField name="packages" type="string[]">
+  Array of package names required by the generated code
+</ResponseField>
+
+<ResponseField name="error" type="string | null">
+  Error message if generation failed
+</ResponseField>
+
+<ResponseField name="generate" type="(options: GenerateOptions) => Promise<void>">
+  Method to start code generation
+</ResponseField>
+
+<ResponseField name="apply" type="(files: GeneratedFile[], packages: string[], sandboxId?: string) => Promise<boolean>">
+  Method to apply generated code to a sandbox
+</ResponseField>
+
+<ResponseField name="cancel" type="() => void">
+  Method to cancel ongoing generation
+</ResponseField>
+
+<ResponseField name="reset" type="() => void">
+  Method to reset all state to initial values
+</ResponseField>
+
+<ResponseField name="checkDiagnostics" type="(sandboxId?: string) => Promise<DiagnosticsResult>">
+  Method to run diagnostics on the generated code
+</ResponseField>
+
+## Types
+
+### GenerateOptions
+
+<ParamField path="prompt" type="string" required>
+  The user prompt describing what to generate
+</ParamField>
+
+<ParamField path="isEdit" type="boolean" default="false">
+  Whether this is an edit to existing code or a new generation
+</ParamField>
+
+<ParamField path="sandboxId" type="string">
+  ID of the sandbox to generate code for (required for edits)
+</ParamField>
+
+<ParamField path="onStream" type="(text: string) => void">
+  Callback fired when new content is streamed
+</ParamField>
+
+<ParamField path="onFile" type="(file: GeneratedFile) => void">
+  Callback fired when a complete file is generated
+</ParamField>
+
+<ParamField path="onPackage" type="(pkg: string) => void">
+  Callback fired when a package dependency is detected
+</ParamField>
+
+<ParamField path="onComplete" type="(files: GeneratedFile[], packages: string[]) => void">
+  Callback fired when generation completes successfully
+</ParamField>
+
+<ParamField path="onError" type="(error: string) => void">
+  Callback fired when an error occurs
+</ParamField>
+
+### StreamingFile
+
+<ResponseField name="path" type="string">
+  File path relative to project root
+</ResponseField>
+
+<ResponseField name="content" type="string">
+  File content (may be partial if not completed)
+</ResponseField>
+
+<ResponseField name="type" type="'javascript' | 'css' | 'json' | 'html' | 'text'">
+  Detected file type based on extension
+</ResponseField>
+
+<ResponseField name="completed" type="boolean">
+  Whether the file has finished streaming
+</ResponseField>
+
+### GenerationState
+
+<ResponseField name="isGenerating" type="boolean">
+  Generation is in progress
+</ResponseField>
+
+<ResponseField name="isApplying" type="boolean">
+  Code is being applied to sandbox
+</ResponseField>
+
+<ResponseField name="isChecking" type="boolean">
+  Diagnostics are running
+</ResponseField>
+
+<ResponseField name="isStreaming" type="boolean">
+  Code is actively streaming
+</ResponseField>
+
+<ResponseField name="progress" type="string">
+  Current status message
+</ResponseField>
+
+<ResponseField name="streamedCode" type="string">
+  Raw streamed content
+</ResponseField>
+
+<ResponseField name="currentFile" type="StreamingFile | null">
+  File currently being streamed
+</ResponseField>
+
+<ResponseField name="files" type="GeneratedFile[]">
+  Completed files
+</ResponseField>
+
+<ResponseField name="streamingFiles" type="StreamingFile[]">
+  Files from streaming
+</ResponseField>
+
+<ResponseField name="packages" type="string[]">
+  Required packages
+</ResponseField>
+
+<ResponseField name="error" type="string | null">
+  Error message
+</ResponseField>
+
+## Usage examples
+
+### Basic generation
+
+```tsx
+import { useGeneration } from '@/lib/hooks/use-generation';
+
+function CodeGenerator() {
+  const generation = useGeneration();
+
+  const handleGenerate = async () => {
+    await generation.generate({
+      prompt: 'Create a React counter component',
+      isEdit: false,
+    });
+  };
+
+  return (
+    <div>
+      <button onClick={handleGenerate} disabled={generation.isGenerating}>
+        {generation.isGenerating ? 'Generating...' : 'Generate Code'}
+      </button>
+      
+      {generation.progress && (
+        <p className="status">{generation.progress}</p>
+      )}
+      
+      {generation.error && (
+        <p className="error">{generation.error}</p>
+      )}
+    </div>
+  );
+}
+```
+
+### With streaming callbacks
+
+```tsx
+import { useGeneration } from '@/lib/hooks/use-generation';
+import { useState } from 'react';
+
+function StreamingGenerator() {
+  const generation = useGeneration();
+  const [streamedFiles, setStreamedFiles] = useState<string[]>([]);
+
+  const handleGenerate = async () => {
+    await generation.generate({
+      prompt: 'Build a todo app with React',
+      isEdit: false,
+      onFile: (file) => {
+        console.log('File generated:', file.path);
+        setStreamedFiles((prev) => [...prev, file.path]);
+      },
+      onPackage: (pkg) => {
+        console.log('Package required:', pkg);
+      },
+      onComplete: (files, packages) => {
+        console.log('Generation complete!');
+        console.log('Files:', files.length);
+        console.log('Packages:', packages);
+      },
+    });
+  };
+
+  return (
+    <div>
+      <button onClick={handleGenerate}>
+        Generate
+      </button>
+      
+      {generation.isStreaming && generation.currentFile && (
+        <div className="streaming">
+          <p>Streaming: {generation.currentFile.path}</p>
+        </div>
+      )}
+      
+      <ul>
+        {streamedFiles.map((path) => (
+          <li key={path}>{path}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+```
+
+### Editing existing code
+
+```tsx
+import { useGeneration } from '@/lib/hooks/use-generation';
+
+function CodeEditor({ sandboxId }: { sandboxId: string }) {
+  const generation = useGeneration();
+
+  const handleEdit = async () => {
+    await generation.generate({
+      prompt: 'Add a reset button to the counter',
+      isEdit: true,
+      sandboxId,
+    });
+  };
+
+  return (
+    <div>
+      <button onClick={handleEdit} disabled={generation.isGenerating}>
+        Make Changes
+      </button>
+      
+      {generation.isGenerating && (
+        <div className="progress">
+          <p>{generation.progress}</p>
+          <p>Files: {generation.streamingFiles.length}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+### Apply and validate
+
+```tsx
+import { useGeneration } from '@/lib/hooks/use-generation';
+
+function GenerateAndApply({ sandboxId }: { sandboxId: string }) {
+  const generation = useGeneration();
+
+  const handleGenerateAndApply = async () => {
+    await generation.generate({
+      prompt: 'Create a login form',
+      isEdit: false,
+      onComplete: async (files, packages) => {
+        // Apply generated code
+        const success = await generation.apply(
+          files,
+          packages,
+          sandboxId
+        );
+        
+        if (success) {
+          // Run diagnostics
+          const result = await generation.checkDiagnostics(sandboxId);
+          
+          if (result.success) {
+            console.log('Code applied and validated!');
+          } else {
+            console.error('Diagnostics failed:', result.output);
+          }
+        }
+      },
+    });
+  };
+
+  return (
+    <div>
+      <button onClick={handleGenerateAndApply}>
+        Generate and Apply
+      </button>
+      
+      {generation.isApplying && (
+        <p>Applying code to sandbox...</p>
+      )}
+      
+      {generation.isChecking && (
+        <p>Running diagnostics...</p>
+      )}
+    </div>
+  );
+}
+```
+
+### Full builder integration
+
+```tsx
+import { useGeneration } from '@/lib/hooks/use-generation';
+import { useSandbox } from '@/lib/hooks/use-sandbox';
+import { useCallback, useEffect } from 'react';
+
+function BuilderPage() {
+  const sandbox = useSandbox();
+  const generation = useGeneration();
+
+  const handleGenerate = useCallback(
+    async (options: Parameters<typeof generation.generate>[0]) => {
+      await generation.generate(options);
+    },
+    [generation]
+  );
+
+  useEffect(() => {
+    if (!sandbox.isReady && !sandbox.isCreating && !sandbox.error) {
+      sandbox.createSandbox();
+    }
+  }, [sandbox]);
+
+  return (
+    <div className="builder">
+      <div className="controls">
+        <button
+          onClick={() => handleGenerate({
+            prompt: 'Build a dashboard',
+            isEdit: false,
+          })}
+          disabled={!sandbox.isReady || generation.isGenerating}
+        >
+          Generate
+        </button>
+        
+        {generation.isGenerating && (
+          <button onClick={generation.cancel}>
+            Cancel
+          </button>
+        )}
+      </div>
+      
+      <div className="status">
+        <p>{generation.progress}</p>
+        {generation.isStreaming && (
+          <p>Streaming: {generation.streamingFiles.length} files</p>
+        )}
+      </div>
+    </div>
+  );
+}
+```
+
+## State management
+
+The hook manages complex state transitions:
+
+1. **Idle** - `isGenerating: false`, `isStreaming: false`
+2. **Generating** - `isGenerating: true`, starts with `progress: "Starting generation..."`
+3. **Streaming** - `isStreaming: true`, files appear in `streamingFiles` and `currentFile`
+4. **Applying** - `isApplying: true`, code being written to sandbox
+5. **Checking** - `isChecking: true`, diagnostics running
+6. **Error** - `error` is set, generation stops
+
+## Audio feedback
+
+The hook automatically plays a keyboard typing sound (`/keyboard.mp3`) while `isStreaming` is true at 25% volume.
+
+## Cancellation
+
+Generation can be cancelled at any time using the `cancel()` method, which aborts the fetch request and updates state.
+
+## Error handling
+
+Errors are captured in the `error` field and passed to the `onError` callback if provided. The hook handles:
+
+- Network failures
+- Server errors
+- Abort errors (from cancellation)
+- Stream parsing errors

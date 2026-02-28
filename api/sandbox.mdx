@@ -1,0 +1,275 @@
+---
+title: Sandbox management
+description: Create, monitor, and manage sandbox environments
+---
+
+Sandbox endpoints provide lifecycle management for isolated development environments where code is executed.
+
+## POST /api/sandbox/create
+
+Creates a new sandbox instance.
+
+### Request body
+
+No request body required.
+
+### Response
+
+<ResponseField name="success" type="boolean">
+  Whether the sandbox was created successfully
+</ResponseField>
+
+<ResponseField name="sandboxId" type="string">
+  Unique identifier for the created sandbox
+</ResponseField>
+
+<ResponseField name="url" type="string">
+  Preview URL where the sandbox can be accessed
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if `success` is `false`
+</ResponseField>
+
+### Error codes
+
+<ResponseField name="500" type="Internal Server Error">
+  Failed to create sandbox
+</ResponseField>
+
+### Example request
+
+```bash
+curl -X POST https://your-domain.com/api/sandbox/create
+```
+
+### Example response
+
+```json
+{
+  "success": true,
+  "sandboxId": "sb_abc123xyz",
+  "url": "https://abc123xyz.preview.example.com"
+}
+```
+
+---
+
+## GET /api/sandbox/status
+
+Checks if a sandbox is alive and returns its information.
+
+### Query parameters
+
+<ParamField query="sandboxId" type="string">
+  The sandbox ID to check. If omitted, checks the currently active sandbox
+</ParamField>
+
+### Response
+
+<ResponseField name="success" type="boolean">
+  Whether the status check succeeded
+</ResponseField>
+
+<ResponseField name="isAlive" type="boolean">
+  Whether the sandbox is currently running
+</ResponseField>
+
+<ResponseField name="sandboxId" type="string">
+  The sandbox identifier
+</ResponseField>
+
+<ResponseField name="url" type="string">
+  Preview URL for the sandbox
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if `success` is `false`
+</ResponseField>
+
+### Error codes
+
+<ResponseField name="404" type="Not Found">
+  No active sandbox found
+</ResponseField>
+
+<ResponseField name="500" type="Internal Server Error">
+  Failed to retrieve sandbox status
+</ResponseField>
+
+### Example request
+
+```bash
+curl https://your-domain.com/api/sandbox/status?sandboxId=sb_abc123
+```
+
+### Example response
+
+```json
+{
+  "success": true,
+  "isAlive": true,
+  "sandboxId": "sb_abc123",
+  "url": "https://abc123.preview.example.com"
+}
+```
+
+---
+
+## GET /api/sandbox/files
+
+Retrieves the list of files in a sandbox.
+
+### Query parameters
+
+<ParamField query="sandboxId" type="string">
+  The sandbox ID. If omitted, uses the currently active sandbox
+</ParamField>
+
+### Response
+
+<ResponseField name="success" type="boolean">
+  Whether the file list was retrieved successfully
+</ResponseField>
+
+<ResponseField name="files" type="array">
+  Array of file paths as strings
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if `success` is `false`
+</ResponseField>
+
+### Error codes
+
+<ResponseField name="404" type="Not Found">
+  No active sandbox found
+</ResponseField>
+
+<ResponseField name="500" type="Internal Server Error">
+  Failed to retrieve file list
+</ResponseField>
+
+### Example request
+
+```bash
+curl https://your-domain.com/api/sandbox/files?sandboxId=sb_abc123
+```
+
+### Example response
+
+```json
+{
+  "success": true,
+  "files": [
+    "package.json",
+    "src/App.tsx",
+    "src/index.tsx",
+    "src/components/Button.tsx",
+    "public/index.html"
+  ]
+}
+```
+
+---
+
+## POST /api/sandbox/diagnostics
+
+Runs diagnostic checks on a sandbox to verify its health and capabilities.
+
+### Request body
+
+<ParamField body="sandboxId" type="string">
+  The sandbox ID to diagnose. If omitted, diagnoses the active sandbox
+</ParamField>
+
+### Response
+
+Returns diagnostic results as JSON. The structure depends on the implementation of `runSandboxDiagnostics`.
+
+### Example request
+
+```bash
+curl -X POST https://your-domain.com/api/sandbox/diagnostics \
+  -H "Content-Type: application/json" \
+  -d '{"sandboxId": "sb_abc123"}'
+```
+
+### Example response
+
+```json
+{
+  "sandboxId": "sb_abc123",
+  "status": "healthy",
+  "checks": {
+    "filesystem": "ok",
+    "network": "ok",
+    "runtime": "ok"
+  }
+}
+```
+
+---
+
+## POST /api/sandbox/kill
+
+Terminates a sandbox or all sandboxes.
+
+### Request body
+
+<ParamField body="sandboxId" type="string">
+  The sandbox ID to terminate. If omitted, terminates all active sandboxes
+</ParamField>
+
+### Response
+
+<ResponseField name="success" type="boolean">
+  Whether the termination succeeded
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if `success` is `false`
+</ResponseField>
+
+### Error codes
+
+<ResponseField name="500" type="Internal Server Error">
+  Failed to terminate sandbox
+</ResponseField>
+
+### Example request (specific sandbox)
+
+```bash
+curl -X POST https://your-domain.com/api/sandbox/kill \
+  -H "Content-Type: application/json" \
+  -d '{"sandboxId": "sb_abc123"}'
+```
+
+### Example request (all sandboxes)
+
+```bash
+curl -X POST https://your-domain.com/api/sandbox/kill
+```
+
+### Example response
+
+```json
+{
+  "success": true
+}
+```
+
+---
+
+## Sandbox lifecycle
+
+A typical sandbox workflow:
+
+1. **Create** a sandbox using `/api/sandbox/create`
+2. **Generate** code with `/api/generate/stream`
+3. **Apply** the code using `/api/apply/stream`
+4. **Check status** via `/api/sandbox/status` to verify it's running
+5. **List files** with `/api/sandbox/files` to inspect contents
+6. **Terminate** when done using `/api/sandbox/kill`
+
+Sandboxes maintain state across requests using the `sandboxId` identifier.

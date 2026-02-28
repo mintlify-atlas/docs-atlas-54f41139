@@ -1,0 +1,351 @@
+---
+title: Customization
+description: Customize prompts, models, and behavior in Viber
+---
+
+Viber is designed to be customizable. You can modify AI prompts, change models, adjust configuration, and tune behavior to fit your needs.
+
+## AI model configuration
+
+### Changing the default model
+
+Set the `DEFAULT_MODEL` environment variable:
+
+```bash .env
+DEFAULT_MODEL=gemini-2.5-pro
+```
+
+### Available models
+
+From `src/lib/config.ts:32-45`:
+
+```typescript
+ai: {
+  defaultModel: "gemini-3-pro",
+  availableModels: [
+    "gemini-3-pro",
+    "gemini-3-flash",
+    "gemini-2.0-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+  ],
+  modelDisplayNames: {
+    "gemini-3-pro": "Gemini 3 Pro",
+    "gemini-3-flash": "Gemini 3 Flash",
+    "gemini-2.0-flash": "Gemini 2.0 Flash",
+    "gemini-2.5-flash": "Gemini 2.5 Flash",
+    "gemini-2.5-pro": "Gemini 2.5 Pro",
+  },
+  defaultTemperature: 0.7,
+  maxTokens: 16000,
+}
+```
+
+<Tip>
+For faster responses with simpler tasks, use Flash models. For complex applications requiring deeper reasoning, use Pro models.
+</Tip>
+
+## Customizing AI prompts
+
+Viber's code generation behavior is controlled by system prompts in `src/lib/ai/prompts.ts`.
+
+### Initial generation prompt
+
+The `INITIAL_GENERATION_PROMPT` controls how new code is generated. Key sections you can customize:
+
+#### Component architecture rules
+
+```typescript src/lib/ai/prompts.ts:10-15
+CRITICAL ARCHITECTURE RULES (MANDATORY):
+1. ALWAYS break down landing pages/apps into SEPARATE COMPONENT FILES
+2. NEVER create a single monolithic component file
+3. Each section (Hero, Header, Features, etc.) should be its own component file
+4. App.tsx should ONLY import and compose these section components together
+5. This enables surgical edits
+```
+
+<Accordion title="Why component architecture matters">
+  Breaking apps into separate components enables surgical edits. When a user says "update the hero section", Viber can modify only `Hero.tsx` instead of regenerating the entire application.
+</Accordion>
+
+#### Image endpoint configuration
+
+Customize how images are generated:
+
+```typescript src/lib/ai/prompts.ts:36-41
+IMAGE USAGE (CRITICAL):
+- For images, NEVER call external image APIs directly from the client.
+- ALWAYS use the app's public image endpoint: <img src="${IMAGE_ENDPOINT_BASE}?q=short description" />
+- You MAY optionally add &orientation=landscape|portrait|squarish and &color=...
+- Keep the q value short, general, and descriptive
+```
+
+The `IMAGE_ENDPOINT_BASE` is derived from your `IMAGE_CDN_BASE_URL` environment variable.
+
+#### Styling preferences
+
+```typescript src/lib/ai/prompts.ts:27-28
+CRITICAL RULES:
+1. Use Tailwind CSS v4 for ALL styling - no inline styles or custom CSS files
+2. Use lucide-react for ALL icons
+```
+
+Modify these rules if you prefer different styling approaches.
+
+### Edit mode prompt
+
+The `EDIT_MODE_PROMPT` controls how existing code is modified:
+
+```typescript src/lib/ai/prompts.ts:130-135
+KEY PRINCIPLES (CRITICAL):
+1. **Minimal Changes**: Only modify what's necessary - preserve 99% of existing code
+2. **Preserve Functionality**: Keep all existing features, imports, and structure
+3. **Respect Structure**: Follow existing patterns and code style
+4. **Target Precision**: Edit specific files/components, not everything
+5. **Context Awareness**: Use imports/exports to understand component relationships
+```
+
+<Tip>
+The edit mode prompt includes extensive examples of correct vs incorrect approaches. Study these examples when customizing to maintain surgical editing behavior.
+</Tip>
+
+### Modifying prompts
+
+To customize prompts:
+
+<Steps>
+  <Step title="Open the prompts file">
+    ```bash
+    src/lib/ai/prompts.ts
+    ```
+  </Step>
+
+  <Step title="Modify the prompt constants">
+    Edit `INITIAL_GENERATION_PROMPT` or `EDIT_MODE_PROMPT` to change behavior:
+
+    ```typescript
+    export const INITIAL_GENERATION_PROMPT = `You are an expert React + TypeScript developer.
+    
+    // Add your custom instructions here
+    // ...
+    `;
+    ```
+  </Step>
+
+  <Step title="Test your changes">
+    Restart the development server and test code generation:
+
+    ```bash
+    bun run dev
+    ```
+  </Step>
+
+  <Step title="Iterate based on results">
+    Observe how the AI responds to your prompt changes and refine as needed.
+  </Step>
+</Steps>
+
+<Warning>
+Prompt changes can significantly affect code quality and generation behavior. Test thoroughly before deploying to production.
+</Warning>
+
+## Application configuration
+
+The main configuration file is `src/lib/config.ts`. Here are key sections you can customize:
+
+### Daytona sandbox configuration
+
+```typescript src/lib/config.ts:3-18
+daytona: {
+  snapshotName: "viber-workspace-template",
+  workingDirectory: "/home/daytona/app",
+  devPort: 3000,
+  devStartupDelay: 3000,
+  devRestartDelay: 1000,
+  autoStopIntervalMinutes: 30,
+  autoDeleteIntervalMinutes: 0,
+  previewProxyDomain: "preview.viber.lol",
+}
+```
+
+<CodeGroup>
+```typescript Auto-stop configuration
+// Auto-stop sandbox after 30 minutes of inactivity
+autoStopIntervalMinutes: 30,
+
+// Delete immediately when stopped (0)
+// Set to -1 to never auto-delete
+autoDeleteIntervalMinutes: 0,
+```
+
+```typescript Preview domain
+// Use custom preview domain for warning-free previews
+// Format: {port}-{sandboxId}.{proxyDomain}
+previewProxyDomain: "preview.viber.lol",
+
+// Or leave empty to use default Daytona URLs
+previewProxyDomain: "",
+```
+</CodeGroup>
+
+### AI configuration
+
+```typescript src/lib/config.ts:31-50
+ai: {
+  defaultModel: "gemini-3-pro",
+  availableModels: [...],
+  modelDisplayNames: {...},
+  defaultTemperature: 0.7,
+  maxTokens: 16000,
+  truncationRecoveryMaxTokens: 4000,
+}
+```
+
+<Accordion title="Temperature and token limits">
+  - `defaultTemperature: 0.7` - Controls randomness (0.0 = deterministic, 1.0 = creative)
+  - `maxTokens: 16000` - Maximum tokens per request
+  - `truncationRecoveryMaxTokens: 4000` - Tokens for recovery attempts
+
+  Lower temperature for more consistent code generation, higher for more creative solutions.
+</Accordion>
+
+### UI configuration
+
+```typescript src/lib/config.ts:61-68
+ui: {
+  showModelSelector: true,
+  showStatusIndicator: true,
+  animationDuration: 200,
+  toastDuration: 3000,
+  maxChatMessages: 100,
+  maxRecentMessagesContext: 20,
+}
+```
+
+### Code application configuration
+
+```typescript src/lib/config.ts:52-58
+codeApplication: {
+  defaultRefreshDelay: 2000,
+  packageInstallRefreshDelay: 5000,
+  enableTruncationRecovery: false,
+  maxTruncationRecoveryAttempts: 1,
+}
+```
+
+<Tip>
+Increase `packageInstallRefreshDelay` if package installations are timing out or not reflecting in the preview.
+</Tip>
+
+### File management configuration
+
+```typescript src/lib/config.ts:85-114
+files: {
+  excludePatterns: [
+    "node_modules/**",
+    ".git/**",
+    "dist/**",
+    "build/**",
+    "*.log",
+    ".DS_Store",
+  ],
+  maxFileSize: 1024 * 1024, // 1MB
+  textFileExtensions: [
+    ".js", ".jsx", ".ts", ".tsx",
+    ".css", ".scss", ".sass",
+    ".html", ".xml", ".svg",
+    ".json", ".yml", ".yaml",
+    ".md", ".txt",
+    ".env", ".gitignore", ".dockerignore",
+  ],
+}
+```
+
+## Advanced customization
+
+### Custom file context
+
+The `buildSystemPrompt` function in `src/lib/ai/prompts.ts:283-323` allows you to inject file context:
+
+```typescript src/lib/ai/prompts.ts:283-295
+export function buildSystemPrompt(
+  isEdit: boolean,
+  fileContext?: Record<string, string>
+): string {
+  let prompt = isEdit ? EDIT_MODE_PROMPT : INITIAL_GENERATION_PROMPT;
+
+  if (fileContext && Object.keys(fileContext).length > 0) {
+    prompt += FILE_CONTEXT_PROMPT;
+    for (const [path, content] of Object.entries(fileContext)) {
+      if (content.length < 5000) {
+        prompt += `\n<file path="${path}">\n${content}\n</file>\n`;
+      }
+    }
+  }
+}
+```
+
+This injects existing file contents into the prompt for context-aware edits.
+
+### Package installation configuration
+
+```typescript src/lib/config.ts:78-82
+packages: {
+  useLegacyPeerDeps: true,
+  installTimeout: 60000,
+  autoRestartVite: true,
+}
+```
+
+Set `useLegacyPeerDeps: false` if you prefer strict peer dependency resolution.
+
+## Configuration access patterns
+
+Access configuration values programmatically:
+
+```typescript
+import { appConfig, getConfig, getConfigValue } from './lib/config';
+
+// Get entire section
+const aiConfig = getConfig('ai');
+console.log(aiConfig.defaultModel); // "gemini-3-pro"
+
+// Get nested value by path
+const temperature = getConfigValue('ai.defaultTemperature');
+console.log(temperature); // 0.7
+
+// Direct access
+const maxMessages = appConfig.ui.maxChatMessages;
+console.log(maxMessages); // 100
+```
+
+## Best practices
+
+<Steps>
+  <Step title="Test in development first">
+    Always test configuration and prompt changes locally before deploying to production.
+  </Step>
+
+  <Step title="Document your changes">
+    Add comments explaining why you modified default values:
+
+    ```typescript
+    ai: {
+      // Increased for complex enterprise applications
+      maxTokens: 32000,
+    }
+    ```
+  </Step>
+
+  <Step title="Version control">
+    Commit configuration changes with clear commit messages:
+
+    ```bash
+    git commit -m "Increase AI token limit for complex apps"
+    ```
+  </Step>
+
+  <Step title="Monitor behavior">
+    Watch for changes in code quality, response times, and error rates after modifications.
+  </Step>
+</Steps>

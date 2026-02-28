@@ -1,0 +1,106 @@
+---
+title: Introduction
+description: Build React applications through natural voice conversation with Viber
+---
+
+<img
+  className="block dark:hidden"
+  src="/images/hero-light.svg"
+  alt="Viber Hero Light"
+/>
+<img
+  className="hidden dark:block"
+  src="/images/hero-dark.svg"
+  alt="Viber Hero Dark"
+/>
+
+## Welcome to Viber
+
+Viber is a speech-first coding experience where you describe what you want to build, an AI agent generates real code, applies it to a sandboxed workspace, and you immediately see the result in a live preview — all while the voice agent narrates what's happening.
+
+Talk like you're speaking to another developer. No keyboard required for the primary workflow.
+
+## What makes Viber different
+
+<CardGroup cols={2}>
+  <Card title="Voice-first UX" icon="microphone">
+    Talk naturally to build apps. Describe features, request changes, and navigate your project using only your voice.
+  </Card>
+  <Card title="Real code, real preview" icon="code">
+    Generated files are applied to a Daytona sandbox environment and reflected instantly in the live preview.
+  </Card>
+  <Card title="Agentic tool calling" icon="robot">
+    The ElevenLabs voice agent can trigger build actions and UI navigation via client-side tools.
+  </Card>
+  <Card title="Context-aware edits" icon="pencil">
+    Edit requests focus on relevant files rather than sending the entire codebase to the model.
+  </Card>
+  <Card title="Image-aware generation" icon="image">
+    LLM-produced image descriptions are translated into real images via an Unsplash-backed API route.
+  </Card>
+  <Card title="Instant feedback" icon="bolt">
+    Watch your application come to life in real-time as the voice agent narrates each step.
+  </Card>
+</CardGroup>
+
+## How it works
+
+Viber combines multiple AI services to create a seamless voice-to-code experience:
+
+<Steps>
+  <Step title="Speak your intent">
+    Use natural language to describe the application you want to build or the changes you want to make.
+  </Step>
+  <Step title="AI understands and generates">
+    Google Gemini analyzes your request, plans the architecture, and generates React code with Vite + TypeScript.
+  </Step>
+  <Step title="Code applies to sandbox">
+    Generated files are automatically written to a Daytona sandbox workspace.
+  </Step>
+  <Step title="See it live">
+    The preview updates instantly, and the voice agent narrates what's happening.
+  </Step>
+</Steps>
+
+## Architecture overview
+
+Viber's architecture combines voice interaction, code generation, and sandbox management:
+
+- **User device**: Voice input + real-time UI preview
+- **ElevenLabs voice agent**: Conversation loop, tool calls, narrated status updates
+- **Google Gemini code agent**: Architecture planning and implementation
+- **Daytona sandbox**: Runs the generated Vite app and serves a preview URL
+
+<Note>
+  Voice mode is optional. You can use Viber in text mode without configuring ElevenLabs.
+</Note>
+
+## Get started
+
+<CardGroup cols={2}>
+  <Card
+    title="Quick start"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Get up and running with Viber in minutes
+  </Card>
+  <Card
+    title="Installation"
+    icon="download"
+    href="/installation"
+  >
+    Detailed setup instructions and configuration
+  </Card>
+</CardGroup>
+
+## Tech stack
+
+Viber is built with modern web technologies:
+
+- **Frontend**: React 19, TanStack Start, Vite, TypeScript, Tailwind CSS
+- **Voice**: ElevenLabs Conversational AI
+- **Code generation**: Google Gemini (gemini-3-pro)
+- **Sandbox**: Daytona SDK
+- **Images**: Unsplash API
+- **Runtime**: Bun

@@ -1,0 +1,281 @@
+---
+title: Deployment
+description: Deploy Viber to Google Cloud Run
+---
+
+Viber can be deployed to Google Cloud Run for production use. This guide walks through the complete deployment process.
+
+## Prerequisites
+
+Before deploying, ensure you have:
+
+- A Google Cloud Platform account
+- The `gcloud` CLI installed and configured
+- All required [environment variables](/guides/environment-setup) ready
+- Your project built and tested locally
+
+## Deployment steps
+
+<Steps>
+  <Step title="Authenticate with Google Cloud">
+    Log in to your Google Cloud account:
+
+    ```bash
+    gcloud auth login
+    ```
+
+    This will open a browser window for authentication.
+  </Step>
+
+  <Step title="Set your project ID">
+    Configure gcloud to use your project:
+
+    ```bash
+    gcloud config set project YOUR_PROJECT_ID
+    ```
+
+    Replace `YOUR_PROJECT_ID` with your actual Google Cloud project ID.
+  </Step>
+
+  <Step title="Enable required services">
+    Enable Cloud Run and Cloud Build APIs:
+
+    ```bash
+    gcloud services enable run.googleapis.com cloudbuild.googleapis.com
+    ```
+  </Step>
+
+  <Step title="Build and push container image">
+    Build your Docker image and push it to Google Container Registry:
+
+    ```bash
+    gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/viber .
+    ```
+
+    <Warning>
+    This step can take several minutes as it builds the complete application image.
+    </Warning>
+  </Step>
+
+  <Step title="Deploy to Cloud Run">
+    Deploy the container to Cloud Run with your environment variables:
+
+    ```bash
+    gcloud run deploy viber \
+      --image gcr.io/YOUR_PROJECT_ID/viber \
+      --region us-central1 \
+      --allow-unauthenticated \
+      --port 3000 \
+      --set-env-vars GEMINI_API_KEY=... \
+      --set-env-vars DAYTONA_API_KEY=... \
+      --set-env-vars UNSPLASH_ACCESS_KEY=... \
+      --set-env-vars UNSPLASH_SECRET_KEY=...
+    ```
+
+    Add optional environment variables as needed:
+
+    ```bash
+    gcloud run deploy viber \
+      --image gcr.io/YOUR_PROJECT_ID/viber \
+      --region us-central1 \
+      --allow-unauthenticated \
+      --port 3000 \
+      --set-env-vars GEMINI_API_KEY=your_key \
+      --set-env-vars DAYTONA_API_KEY=your_key \
+      --set-env-vars UNSPLASH_ACCESS_KEY=your_key \
+      --set-env-vars UNSPLASH_SECRET_KEY=your_key \
+      --set-env-vars ELEVENLABS_API_KEY=your_key \
+      --set-env-vars DEFAULT_MODEL=gemini-2.5-pro \
+      --set-env-vars IMAGE_CDN_BASE_URL=https://your-app.run.app
+    ```
+  </Step>
+
+  <Step title="Access your deployment">
+    After deployment completes, Cloud Run will provide a URL like:
+
+    ```
+    https://viber-xxxxx.run.app
+    ```
+
+    Visit this URL to access your deployed Viber instance.
+  </Step>
+</Steps>
+
+## Configuration options
+
+### Region selection
+
+You can deploy to different regions by changing the `--region` flag:
+
+```bash
+--region us-central1      # Iowa (default in example)
+--region us-east1         # South Carolina
+--region europe-west1     # Belgium
+--region asia-northeast1  # Tokyo
+```
+
+### Authentication
+
+The example uses `--allow-unauthenticated` to make the service publicly accessible. For private deployments, remove this flag:
+
+```bash
+gcloud run deploy viber \
+  --image gcr.io/YOUR_PROJECT_ID/viber \
+  --region us-central1 \
+  --port 3000
+```
+
+<Tip>
+For production deployments, consider using Cloud Run's built-in authentication or placing your service behind Cloud Load Balancing with Identity-Aware Proxy.
+</Tip>
+
+### Resource limits
+
+You can configure CPU and memory limits:
+
+```bash
+gcloud run deploy viber \
+  --image gcr.io/YOUR_PROJECT_ID/viber \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --port 3000 \
+  --cpu 2 \
+  --memory 2Gi \
+  --set-env-vars GEMINI_API_KEY=...
+```
+
+## Updating your deployment
+
+To update an existing deployment:
+
+<Steps>
+  <Step title="Rebuild the image">
+    ```bash
+    gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/viber .
+    ```
+  </Step>
+
+  <Step title="Deploy the new version">
+    ```bash
+    gcloud run deploy viber \
+      --image gcr.io/YOUR_PROJECT_ID/viber \
+      --region us-central1
+    ```
+
+    Cloud Run will automatically handle the rollout.
+  </Step>
+</Steps>
+
+## Environment variables in production
+
+<Warning>
+Never include sensitive API keys directly in your Dockerfile or source code. Always use Cloud Run's `--set-env-vars` flag or environment variable configuration in the console.
+</Warning>
+
+### Using environment variable files
+
+For easier management, create an `.env.yaml` file:
+
+```yaml .env.yaml
+GEMINI_API_KEY: your_gemini_api_key
+DAYTONA_API_KEY: your_daytona_api_key
+UNSPLASH_ACCESS_KEY: your_unsplash_access_key
+UNSPLASH_SECRET_KEY: your_unsplash_secret_key
+ELEVENLABS_API_KEY: your_elevenlabs_api_key
+DEFAULT_MODEL: gemini-2.5-pro
+```
+
+Then deploy with:
+
+```bash
+gcloud run deploy viber \
+  --image gcr.io/YOUR_PROJECT_ID/viber \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --port 3000 \
+  --env-vars-file .env.yaml
+```
+
+<Tip>
+Add `.env.yaml` to your `.gitignore` to prevent accidentally committing secrets.
+</Tip>
+
+## Client-side environment variables
+
+The `VITE_ELEVENLABS_AGENT_ID` variable is compiled into the frontend during build. From the Dockerfile:
+
+```dockerfile Dockerfile:14
+ENV VITE_ELEVENLABS_AGENT_ID=agent_5901kch85sfye06s56m7kshw9kf4
+RUN rm -rf .output && bun run build
+```
+
+<Accordion title="How to customize VITE_ELEVENLABS_AGENT_ID">
+  To use your own ElevenLabs agent ID:
+
+  1. Modify the Dockerfile to use a build argument:
+
+  ```dockerfile
+  ARG ELEVENLABS_AGENT_ID
+  ENV VITE_ELEVENLABS_AGENT_ID=${ELEVENLABS_AGENT_ID}
+  RUN rm -rf .output && bun run build
+  ```
+
+  2. Build with the argument:
+
+  ```bash
+  gcloud builds submit \
+    --tag gcr.io/YOUR_PROJECT_ID/viber \
+    --substitutions _ELEVENLABS_AGENT_ID=your_agent_id \
+    .
+  ```
+
+  Or modify the Dockerfile directly before building.
+</Accordion>
+
+## Monitoring and logs
+
+View logs for your deployment:
+
+```bash
+gcloud run services logs read viber --region us-central1
+```
+
+Or view logs in real-time:
+
+```bash
+gcloud run services logs tail viber --region us-central1
+```
+
+## Troubleshooting
+
+### Deployment fails during build
+
+Check Cloud Build logs:
+
+```bash
+gcloud builds list
+gcloud builds log BUILD_ID
+```
+
+### Service fails to start
+
+Verify all required environment variables are set:
+
+```bash
+gcloud run services describe viber --region us-central1
+```
+
+### Container exits immediately
+
+Check that the PORT environment variable matches the exposed port (3000):
+
+```bash
+--port 3000
+```
+
+From the Dockerfile:
+
+```dockerfile Dockerfile:20
+ENV PORT=3000
+EXPOSE 3000
+```

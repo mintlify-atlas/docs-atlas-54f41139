@@ -1,0 +1,454 @@
+---
+title: Sandbox preview
+description: Real-time preview of generated code in Daytona cloud development environments
+---
+
+Viber runs your generated code in live Daytona sandboxes, providing instant preview with hot module replacement (HMR) and automatic dependency installation.
+
+## Sandbox architecture
+
+Each Viber session creates an isolated Daytona workspace running a Vite development server:
+
+```
+┌─────────────────────────────────────────┐
+│  Viber Frontend (Browser)               │
+│  ┌─────────────────────────────────┐   │
+│  │ Preview iframe                  │   │
+│  │ https://sandbox-id.daytona.app  │   │
+│  └─────────────────────────────────┘   │
+│              ▲                          │
+│              │ WebSocket (HMR)          │
+└──────────────┼──────────────────────────┘
+               │
+┌──────────────┼──────────────────────────┐
+│  Daytona Sandbox                        │
+│              │                           │
+│  ┌───────────▼──────────────┐          │
+│  │ Vite Dev Server :5173     │          │
+│  │ Hot Module Replacement    │          │
+│  └───────────────────────────┘          │
+│              ▲                           │
+│              │                           │
+│  ┌───────────┼──────────────┐          │
+│  │ File System              │          │
+│  │ /projects/viber/src/     │          │
+│  │ - App.tsx                 │          │
+│  │ - components/             │          │
+│  │   - Header.tsx            │          │
+│  │   - Hero.tsx              │          │
+│  └───────────────────────────┘          │
+└─────────────────────────────────────────┘
+```
+
+## Sandbox lifecycle
+
+<Steps>
+  <Step title="Create sandbox">
+    When Viber loads, it creates a new Daytona workspace:
+    
+    ```tsx src/lib/sandbox/service.ts
+    export async function createNewSandbox(): Promise<CreateSandboxResult> {
+      // Terminate any existing sandboxes
+      await sandboxManager.terminateAll();
+      
+      // Create new sandbox
+      const sandbox = createSandbox();
+      const info: SandboxInfo = await sandbox.create();
+      
+      // Setup Vite app template
+      await sandbox.setupApp();
+      
+      // Register for management
+      sandboxManager.register(info.sandboxId, sandbox);
+      
+      return {
+        success: true,
+        sandboxId: info.sandboxId,
+        url: info.url,  // e.g., https://abc123.daytona.app
+      };
+    }
+    ```
+  </Step>
+  
+  <Step title="Setup application">
+    The sandbox initializes a React + Vite + TypeScript template with Tailwind CSS v4.
+  </Step>
+  
+  <Step title="Start dev server">
+    Vite dev server starts on port 5173 with HMR enabled.
+  </Step>
+  
+  <Step title="Stream preview">
+    Frontend embeds the sandbox URL in an iframe for live preview.
+  </Step>
+  
+  <Step title="Apply code changes">
+    As code is generated, files are written to the sandbox and HMR updates the preview instantly.
+  </Step>
+</Steps>
+
+## Sandbox manager
+
+Viber uses a singleton manager to track active sandboxes:
+
+```tsx src/lib/sandbox/manager.ts
+class SandboxManager {
+  private sandboxes: Map<string, ManagedSandbox> = new Map();
+  private activeSandboxId: string | null = null;
+
+  register(sandboxId: string, sandbox: DaytonaSandbox): void {
+    this.sandboxes.set(sandboxId, {
+      sandboxId,
+      sandbox,
+      createdAt: new Date(),
+      lastAccessed: new Date(),
+    });
+    this.activeSandboxId = sandboxId;
+  }
+
+  getActive(): DaytonaSandbox | null {
+    if (!this.activeSandboxId) return null;
+    
+    const managed = this.sandboxes.get(this.activeSandboxId);
+    if (managed) {
+      managed.lastAccessed = new Date();
+      return managed.sandbox;
+    }
+    return null;
+  }
+
+  async terminate(sandboxId: string): Promise<void> {
+    const managed = this.sandboxes.get(sandboxId);
+    if (managed) {
+      await managed.sandbox.destroy();
+      this.sandboxes.delete(sandboxId);
+    }
+  }
+}
+
+export const sandboxManager = new SandboxManager();
+```
+
+<Info>
+The sandbox manager ensures only one active sandbox per session to conserve resources.
+</Info>
+
+## File operations
+
+### Writing files
+
+Code is applied to the sandbox through the file API:
+
+```tsx src/lib/sandbox/service.ts
+export async function applyFilesToSandbox(
+  files: SandboxFile[],
+  sandboxId?: string,
+  onProgress?: (current: number, total: number, fileName: string) => void
+): Promise<{ success: boolean; appliedFiles: string[] }> {
+  const sandbox = sandboxId
+    ? sandboxManager.get(sandboxId)
+    : sandboxManager.getActive();
+  
+  if (!sandbox) {
+    return { success: false, appliedFiles: [], error: "No active sandbox" };
+  }
+  
+  const appliedFiles: string[] = [];
+  
+  await Promise.all(
+    files.map(async (file, index) => {
+      onProgress?.(index + 1, files.length, file.path);
+      await sandbox.write(file.path, file.content);
+      appliedFiles.push(file.path);
+    })
+  );
+  
+  return { success: true, appliedFiles };
+}
+```
+
+### Reading files
+
+For edit mode, Viber reads existing files to provide context:
+
+```tsx src/lib/sandbox/service.ts
+export async function getSandboxFileContents(
+  filePaths: string[],
+  sandboxId?: string
+): Promise<SandboxFilesResult> {
+  const sandbox = sandboxId
+    ? sandboxManager.get(sandboxId)
+    : sandboxManager.getActive();
+  
+  if (!sandbox) {
+    return { success: false, error: "No active sandbox" };
+  }
+  
+  const fileContents: Record<string, string> = {};
+  
+  await Promise.all(
+    filePaths.map(async (file) => {
+      try {
+        fileContents[file] = await sandbox.read(file);
+      } catch {
+        // Skip unreadable files
+      }
+    })
+  );
+  
+  return { success: true, files: fileContents };
+}
+```
+
+## Preview iframe
+
+The preview is rendered in a sandboxed iframe:
+
+```tsx src/components/builder/preview/sandbox-iframe.tsx
+export function SandboxIframe({ url, refreshKey = 0 }: SandboxIframeProps) {
+  // Add cache-busting parameter to force fresh load
+  const cacheBustedUrl = `${url}${url.includes("?") ? "&" : "?"}_t=${refreshKey}`;
+
+  return (
+    <iframe
+      key={refreshKey}
+      src={cacheBustedUrl}
+      className="w-full h-full border-0 bg-white"
+      title="Preview"
+      allow="cross-origin-isolated"
+      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+    />
+  );
+}
+```
+
+<Note>
+The iframe includes `sandbox` attributes for security, allowing scripts and forms while isolating from the parent page.
+</Note>
+
+## Package installation
+
+When the AI generates `<package>` tags, Viber automatically installs them:
+
+```tsx src/lib/sandbox/service.ts
+export async function installPackages(
+  packages: string[],
+  sandboxId?: string
+): Promise<{ success: boolean; error?: string }> {
+  const sandbox = sandboxId
+    ? sandboxManager.get(sandboxId)
+    : sandboxManager.getActive();
+  
+  if (!sandbox) {
+    return { success: false, error: "No active sandbox" };
+  }
+  
+  // Runs npm install <packages> in the sandbox
+  const result = await sandbox.install(packages);
+  return { success: result.success, error: result.stderr || undefined };
+}
+```
+
+<Tabs>
+  <Tab title="Auto-install flow">
+    1. AI generates code with `<package>lucide-react</package>`
+    2. Parser extracts package name
+    3. Backend runs `npm install lucide-react` in sandbox
+    4. Vite HMR updates preview with new package
+  </Tab>
+  
+  <Tab title="Pre-installed packages">
+    The Vite template includes:
+    - `react` and `react-dom`
+    - `typescript`
+    - `tailwindcss` v4
+    - `lucide-react` (for icons)
+    - `vite` and related plugins
+  </Tab>
+</Tabs>
+
+## Hot module replacement
+
+Vite's HMR provides instant updates without full page reloads:
+
+```tsx
+// When you write a file:
+await sandbox.write("src/components/Hero.tsx", content);
+
+// Vite detects the change
+// → Recompiles Hero.tsx
+// → Sends HMR update over WebSocket
+// → React Fast Refresh updates component
+// → Preview updates in <200ms
+```
+
+<Tip>
+HMR preserves component state during updates, so you don't lose form inputs or scroll position.
+</Tip>
+
+## Sandbox status
+
+Viber monitors sandbox health:
+
+```tsx src/lib/sandbox/service.ts
+export async function getSandboxStatus(
+  sandboxId?: string
+): Promise<SandboxStatusResult> {
+  const id = sandboxId || sandboxManager.getActiveSandboxId();
+  if (!id) {
+    return { success: false, error: "No active sandbox" };
+  }
+  
+  const sandbox = sandboxManager.get(id);
+  if (!sandbox) {
+    return { success: false, error: "Sandbox not found" };
+  }
+  
+  const info = sandbox.getInfo();
+  return {
+    success: true,
+    isAlive: sandbox.isActive(),
+    sandboxId: id,
+    url: info?.url,
+  };
+}
+```
+
+This powers the "Setting up workspace..." status in the UI.
+
+## Diagnostics
+
+Viber can run build checks in the sandbox:
+
+```tsx src/lib/sandbox/service.ts
+export async function runSandboxDiagnostics(
+  sandboxId?: string
+): Promise<{ success: boolean; output?: string }> {
+  const sandbox = sandboxId
+    ? sandboxManager.get(sandboxId)
+    : sandboxManager.getActive();
+  
+  if (!sandbox) {
+    return { success: false, error: "No active sandbox" };
+  }
+  
+  // Runs `npm run build` or similar
+  const result = await sandbox.runDiagnostics();
+  return {
+    success: result.success,
+    output: result.output,
+  };
+}
+```
+
+This helps catch TypeScript errors or build issues.
+
+## Restarting the dev server
+
+If the preview becomes unresponsive, restart the dev server:
+
+```tsx src/lib/sandbox/service.ts
+export async function restartSandbox(
+  sandboxId?: string
+): Promise<{ success: boolean; error?: string }> {
+  const sandbox = sandboxId
+    ? sandboxManager.get(sandboxId)
+    : sandboxManager.getActive();
+  
+  if (!sandbox) {
+    return { success: false, error: "No active sandbox" };
+  }
+  
+  await sandbox.restartDevServer();
+  return { success: true };
+}
+```
+
+## Sandbox cleanup
+
+<CardGroup cols={2}>
+  <Card title="Manual termination" icon="trash">
+    ```tsx
+    await sandboxManager.terminate(sandboxId);
+    ```
+    
+    Destroys a specific sandbox.
+  </Card>
+  
+  <Card title="Automatic cleanup" icon="clock">
+    ```tsx
+    await sandboxManager.cleanup(maxAge);
+    ```
+    
+    Removes sandboxes older than `maxAge` milliseconds.
+  </Card>
+  
+  <Card title="Terminate all" icon="x">
+    ```tsx
+    await sandboxManager.terminateAll();
+    ```
+    
+    Destroys all managed sandboxes.
+  </Card>
+  
+  <Card title="Session isolation" icon="shield">
+    Each browser session gets its own sandbox, isolated from others.
+  </Card>
+</CardGroup>
+
+## Preview toolbar
+
+The preview panel includes controls for interacting with the sandbox:
+
+```tsx
+<PreviewToolbar>
+  <Button onClick={handleRefresh}>Refresh</Button>
+  <Button onClick={handleOpenInNewTab}>Open in new tab</Button>
+  <Button onClick={handleRestart}>Restart server</Button>
+</PreviewToolbar>
+```
+
+## Performance considerations
+
+<AccordionGroup>
+  <Accordion title="File batching">
+    Apply multiple files in parallel for faster updates:
+    
+    ```tsx
+    await Promise.all(
+      files.map(file => sandbox.write(file.path, file.content))
+    );
+    ```
+  </Accordion>
+  
+  <Accordion title="Incremental updates">
+    HMR only rebuilds changed modules, not the entire app.
+  </Accordion>
+  
+  <Accordion title="Resource limits">
+    Each sandbox has CPU and memory limits. Viber terminates old sandboxes to free resources.
+  </Accordion>
+  
+  <Accordion title="Network latency">
+    File writes are async. UI shows "Applying changes..." during writes.
+  </Accordion>
+</AccordionGroup>
+
+## Configuration
+
+Sandbox behavior is configured through environment variables:
+
+```bash .env
+# Daytona API endpoint
+DAYTONA_API_URL=https://api.daytona.io
+
+# Authentication
+DAYTONA_API_KEY=your_api_key
+
+# Default workspace template
+DEFAULT_TEMPLATE=react-vite-ts
+```
+
+<Note>
+Viber requires a Daytona account with API access. Contact Daytona to get an API key.
+</Note>

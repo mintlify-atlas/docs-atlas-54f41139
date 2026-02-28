@@ -1,0 +1,167 @@
+---
+title: Architecture overview
+description: High-level architecture and component interaction in Viber
+---
+
+Viber is a voice-first code generation platform that combines conversational AI with real-time sandbox environments. The architecture is designed for seamless interaction between voice input, intelligent code generation, and live preview.
+
+## System architecture
+
+Viber's architecture consists of four main components that work together to enable voice-driven development:
+
+<img src="/images/architecture.png" alt="Viber Architecture Diagram" />
+
+### Component flow
+
+1. **User Device**: Captures voice input and displays the real-time UI with live preview
+2. **ElevenLabs Voice Agent**: Manages the conversation loop, handles tool calls, and provides narrated status updates
+3. **Gemini Code Agent**: Performs architecture analysis and code implementation with context-aware generation
+4. **Daytona Sandbox**: Executes the generated Vite application and serves preview URLs
+
+## Data flow
+
+<Steps>
+  <Step title="Voice input">
+    User speaks a command or description through their device's microphone
+  </Step>
+  
+  <Step title="Voice agent processing">
+    ElevenLabs voice agent interprets the intent and decides whether to:
+    - Call the `vibe_build` tool to generate/edit code
+    - Call the `navigate_ui` tool to change the UI panel
+    - Respond conversationally
+  </Step>
+  
+  <Step title="Code generation">
+    When `vibe_build` is triggered, the Gemini code agent:
+    - Analyzes the request (create vs. edit)
+    - Loads relevant file context for edits
+    - Generates code using structured prompts
+    - Streams results back as XML-tagged files
+  </Step>
+  
+  <Step title="Sandbox application">
+    Generated files are written to the Daytona sandbox:
+    - Files are uploaded via the Daytona SDK
+    - Vite dev server hot-reloads the changes
+    - Preview URL updates in real-time
+  </Step>
+  
+  <Step title="User feedback">
+    Voice agent narrates progress and the user sees:
+    - Live preview of the generated application
+    - File tree updates
+    - Code editor updates
+  </Step>
+</Steps>
+
+## Key architectural patterns
+
+### Client-side tool calling
+
+The voice agent uses **client-side tools** to trigger actions without server round-trips:
+
+```typescript
+const conversation = useConversation({
+  clientTools: {
+    vibe_build: async ({ prompt, action }) => {
+      await onGenerate({ prompt, isEdit: action === "edit" });
+      return "Generation started successfully.";
+    },
+    navigate_ui: ({ panel }) => {
+      return onNavigate(panel).message;
+    },
+  },
+});
+```
+
+This enables the voice agent to control the UI and trigger code generation directly from the client.
+
+### Component-based code generation
+
+Viber enforces a **component-based architecture** for generated apps:
+
+- Landing pages are broken into section components (Header, Hero, Features, Footer)
+- App.tsx imports and composes these sections
+- Edits target specific component files rather than regenerating everything
+
+<Note>
+This architectural pattern enables **surgical edits** - when a user says "update the hero section", only `Hero.tsx` is regenerated, preserving all other code.
+</Note>
+
+### Streaming code generation
+
+Code is generated and applied incrementally:
+
+```typescript
+for await (const event of streamGenerateCode({ prompt, isEdit, fileContext })) {
+  switch (event.type) {
+    case "file":
+      // Write file to sandbox immediately
+      await sandbox.write(event.data.path, event.data.content);
+      break;
+    case "package":
+      // Queue package for installation
+      packagesToInstall.push(event.data.name);
+      break;
+  }
+}
+```
+
+This provides instant feedback as files are generated.
+
+### Context-aware file selection
+
+For edit operations, Viber uses an **LLM-based intent analyzer** to select relevant files:
+
+```typescript
+// User: "update the hero to bg blue"
+const intentResult = await selectFilesForEdit(prompt, fileList);
+// Returns: { targetFiles: ["src/components/Hero.tsx"], editType: "style" }
+```
+
+This reduces token usage and improves generation quality by providing only relevant context.
+
+## Technology stack
+
+<CardGroup cols={2}>
+  <Card title="Voice" icon="microphone">
+    - ElevenLabs Conversational AI
+    - WebSocket connections
+    - Client-side tool calling
+  </Card>
+  
+  <Card title="Code generation" icon="code">
+    - Google Gemini (gemini-3-pro)
+    - Vercel AI SDK
+    - XML-based file parsing
+  </Card>
+  
+  <Card title="Sandbox" icon="cube">
+    - Daytona SDK
+    - Vite dev server
+    - HMR over WebSocket
+  </Card>
+  
+  <Card title="Frontend" icon="browser">
+    - React 18 with TypeScript
+    - TanStack Start (full-stack framework)
+    - Tailwind CSS v4
+  </Card>
+</CardGroup>
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="Voice agent" icon="microphone" href="/architecture/voice-agent">
+    Learn about the ElevenLabs voice agent and tool calling
+  </Card>
+  
+  <Card title="Code agent" icon="code" href="/architecture/code-agent">
+    Explore Gemini code generation and prompts
+  </Card>
+  
+  <Card title="Sandbox" icon="cube" href="/architecture/sandbox">
+    Understand Daytona sandbox management
+  </Card>
+</CardGroup>

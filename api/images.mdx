@@ -1,0 +1,121 @@
+---
+title: Image proxy
+description: Fetch and serve images from Unsplash API
+---
+
+## GET /images
+
+Proxies image search requests to Unsplash and returns the image bytes. Provides caching headers for optimal performance.
+
+### Query parameters
+
+<ParamField query="q" type="string" required>
+  Search query for the image (e.g., "sunset", "technology", "nature"). Maximum 100 characters after normalization
+</ParamField>
+
+<ParamField query="orientation" type="string">
+  Image orientation filter. Defaults to `"landscape"`
+  
+  **Allowed values:**
+  - `landscape`
+  - `portrait`
+  - `squarish`
+</ParamField>
+
+<ParamField query="color" type="string">
+  Color filter for the image
+  
+  **Allowed values:**
+  - `black_and_white`
+  - `black`
+  - `white`
+  - `yellow`
+  - `orange`
+  - `red`
+  - `purple`
+  - `magenta`
+  - `green`
+  - `teal`
+  - `blue`
+</ParamField>
+
+### Response
+
+Returns the image bytes directly with appropriate `Content-Type` header (typically `image/jpeg`).
+
+### Caching
+
+The endpoint implements aggressive caching:
+
+- **Client cache**: 24 hours (`max-age=86400`)
+- **CDN cache**: 7 days (`s-maxage=604800`)
+- **Stale-while-revalidate**: 24 hours
+
+### Error codes
+
+<ResponseField name="400" type="Bad Request">
+  Missing required `q` query parameter
+</ResponseField>
+
+<ResponseField name="404" type="Not Found">
+  No image found matching the query
+</ResponseField>
+
+<ResponseField name="502" type="Bad Gateway">
+  Unsplash API request failed or image fetch failed
+</ResponseField>
+
+<ResponseField name="500" type="Internal Server Error">
+  Unexpected internal error
+</ResponseField>
+
+### Example request
+
+```bash
+curl https://your-domain.com/images?q=sunset&orientation=landscape
+```
+
+### Example with color filter
+
+```bash
+curl https://your-domain.com/images?q=ocean&orientation=portrait&color=blue
+```
+
+### Using in HTML
+
+```html
+<img src="/images?q=mountain&orientation=landscape" alt="Mountain landscape" />
+```
+
+### Using in CSS
+
+```css
+.hero {
+  background-image: url('/images?q=technology&color=blue');
+  background-size: cover;
+}
+```
+
+### Implementation details
+
+- Queries are normalized: trimmed, lowercased, and truncated to 100 characters
+- Only the first search result is returned (`per_page=1`)
+- Content filter is set to `high` for safe content
+- Unsplash API version: `v1`
+- The endpoint streams image bytes directly without storing them
+
+### Response headers
+
+Successful responses include:
+
+```http
+Content-Type: image/jpeg
+Cache-Control: public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400
+```
+
+Error responses include:
+
+```http
+Content-Type: text/plain; charset=utf-8
+Cache-Control: public, max-age=60
+```

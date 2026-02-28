@@ -1,0 +1,332 @@
+---
+title: Installation
+description: Complete setup guide for Viber including prerequisites, environment configuration, and deployment
+---
+
+## Prerequisites
+
+Before installing Viber, ensure you have the following:
+
+<CardGroup cols={2}>
+  <Card title="Bun (recommended)" icon="package">
+    Viber uses Bun as the primary runtime and package manager.
+    
+    Install with: `curl -fsSL https://bun.sh/install | bash`
+  </Card>
+  
+  <Card title="Node.js 18+" icon="node-js">
+    Optional alternative to Bun, though Bun is the recommended path.
+  </Card>
+  
+  <Card title="Google Gemini API key" icon="key">
+    Required for code generation. Get yours at [Google AI Studio](https://makersuite.google.com/app/apikey).
+  </Card>
+  
+  <Card title="Daytona API key" icon="cube">
+    Required for sandbox management. Sign up at [Daytona](https://www.daytona.io/).
+  </Card>
+</CardGroup>
+
+### Optional prerequisites
+
+<CardGroup cols={2}>
+  <Card title="ElevenLabs API key" icon="microphone">
+    Only required for voice mode. Get started at [ElevenLabs](https://elevenlabs.io/).
+  </Card>
+  
+  <Card title="Unsplash API keys" icon="image">
+    Required for AI-generated image placement. Register at [Unsplash Developers](https://unsplash.com/developers).
+  </Card>
+</CardGroup>
+
+## Environment variables
+
+Viber uses environment variables for configuration. Create a `.env` file in the project root:
+
+<CodeGroup>
+```bash Required variables
+# AI Code Generation
+GEMINI_API_KEY=your_gemini_api_key_here
+DEFAULT_MODEL=gemini-3-pro
+
+# Sandbox Management
+DAYTONA_API_KEY=your_daytona_api_key_here
+
+# Image Generation
+UNSPLASH_ACCESS_KEY=your_unsplash_access_key
+UNSPLASH_SECRET_KEY=your_unsplash_secret_key
+```
+
+```bash Optional variables
+# Voice Mode (ElevenLabs)
+ELEVENLABS_API_KEY=your_elevenlabs_api_key
+VITE_ELEVENLABS_AGENT_ID=your_agent_id
+
+# Image CDN (for production)
+IMAGE_CDN_BASE_URL=https://your-domain.com
+```
+</CodeGroup>
+
+### Variable descriptions
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GEMINI_API_KEY` | Yes | Google Gemini API key for code generation |
+| `DEFAULT_MODEL` | No | Gemini model to use (default: `gemini-3-pro`) |
+| `DAYTONA_API_KEY` | Yes | Daytona API key for sandbox management |
+| `UNSPLASH_ACCESS_KEY` | Yes | Unsplash access key for image generation |
+| `UNSPLASH_SECRET_KEY` | Yes | Unsplash secret key for image generation |
+| `ELEVENLABS_API_KEY` | No | ElevenLabs API key (only for voice mode) |
+| `VITE_ELEVENLABS_AGENT_ID` | No | ElevenLabs agent ID (only for voice mode) |
+| `IMAGE_CDN_BASE_URL` | No | Public URL for image CDN in production |
+
+<Warning>
+  `VITE_ELEVENLABS_AGENT_ID` is a client-side variable and must be set at build time. It gets compiled into the frontend bundle.
+</Warning>
+
+## Local installation
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/yourusername/viber.git
+    cd viber
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    Using Bun (recommended):
+    ```bash
+    bun install
+    ```
+
+    Or using npm:
+    ```bash
+    npm install
+    ```
+  </Step>
+
+  <Step title="Configure environment">
+    Create a `.env` file with your API keys (see environment variables section above).
+  </Step>
+
+  <Step title="Start development server">
+    ```bash
+    bun run dev
+    ```
+
+    The application will be available at `http://localhost:3000`.
+  </Step>
+</Steps>
+
+## Production build
+
+To build and run Viber in production mode:
+
+<Steps>
+  <Step title="Build the application">
+    ```bash
+    bun run build
+    ```
+
+    This creates an optimized production build in the `.output` directory.
+  </Step>
+
+  <Step title="Start the production server">
+    ```bash
+    bun run start
+    ```
+
+    The server runs on port 3000 by default.
+  </Step>
+</Steps>
+
+## Docker installation
+
+### Build and run with Docker
+
+<Steps>
+  <Step title="Build the Docker image">
+    ```bash
+    docker build -t viber .
+    ```
+  </Step>
+
+  <Step title="Run the container">
+    ```bash
+    docker run --rm -p 3000:3000 \
+      -e GEMINI_API_KEY=your_key \
+      -e DAYTONA_API_KEY=your_key \
+      -e UNSPLASH_ACCESS_KEY=your_key \
+      -e UNSPLASH_SECRET_KEY=your_key \
+      -e ELEVENLABS_API_KEY=your_key \
+      -e IMAGE_CDN_BASE_URL=https://your-domain.com \
+      viber
+    ```
+  </Step>
+</Steps>
+
+<Info>
+  Remember that `VITE_ELEVENLABS_AGENT_ID` must be set at build time in the Dockerfile, not at runtime.
+</Info>
+
+### Using the convenience script
+
+Viber includes a Docker convenience script:
+
+```bash
+./docker.sh
+```
+
+This script handles building and running the container with environment variables from your `.env` file.
+
+## Deployment to Google Cloud Run
+
+Deploy Viber to Google Cloud Run for a fully managed, serverless deployment:
+
+<Steps>
+  <Step title="Authenticate with Google Cloud">
+    ```bash
+    gcloud auth login
+    gcloud config set project YOUR_PROJECT_ID
+    ```
+  </Step>
+
+  <Step title="Enable required services">
+    ```bash
+    gcloud services enable run.googleapis.com cloudbuild.googleapis.com
+    ```
+  </Step>
+
+  <Step title="Build and push container image">
+    ```bash
+    gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/viber .
+    ```
+  </Step>
+
+  <Step title="Deploy to Cloud Run">
+    ```bash
+    gcloud run deploy viber \
+      --image gcr.io/YOUR_PROJECT_ID/viber \
+      --region us-central1 \
+      --allow-unauthenticated \
+      --port 3000 \
+      --set-env-vars GEMINI_API_KEY=your_key \
+      --set-env-vars DAYTONA_API_KEY=your_key \
+      --set-env-vars UNSPLASH_ACCESS_KEY=your_key \
+      --set-env-vars UNSPLASH_SECRET_KEY=your_key \
+      --set-env-vars ELEVENLABS_API_KEY=your_key \
+      --set-env-vars IMAGE_CDN_BASE_URL=https://your-cloudrun-url.run.app
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  After deployment, Cloud Run will provide a public URL for your Viber instance.
+</Note>
+
+## Available scripts
+
+Viber includes several npm/bun scripts for development and maintenance:
+
+| Script | Command | Description |
+|--------|---------|-------------|
+| Development | `bun run dev` | Start Vite dev server on port 3000 |
+| Build | `bun run build` | Create production build |
+| Preview | `bun run serve` | Preview production build locally |
+| Start | `bun run start` | Run production server |
+| Test | `bun run test` | Run Vitest test suite |
+| Daytona Snapshot | `bun run daytona:snapshot` | Create Daytona sandbox snapshot |
+| Daytona Benchmark | `bun run daytona:benchmark` | Benchmark Daytona performance |
+| Test Proxy | `bun run daytona:test-proxy` | Test Daytona proxy connection |
+
+## Configuring ElevenLabs voice agent
+
+To enable voice mode, you need to set up an ElevenLabs Conversational AI agent:
+
+<Steps>
+  <Step title="Create an ElevenLabs account">
+    Sign up at [ElevenLabs](https://elevenlabs.io/) and navigate to the Conversational AI section.
+  </Step>
+
+  <Step title="Create a new agent">
+    Configure your agent with:
+    - A system prompt that understands the `vibe_build` and `navigate_ui` tools
+    - Voice settings for natural conversation
+    - Tool definitions for the client-side tools
+  </Step>
+
+  <Step title="Get your credentials">
+    Copy:
+    - Your ElevenLabs API key
+    - Your agent ID
+  </Step>
+
+  <Step title="Add to environment">
+    ```bash
+    ELEVENLABS_API_KEY=your_api_key
+    VITE_ELEVENLABS_AGENT_ID=your_agent_id
+    ```
+  </Step>
+
+  <Step title="Rebuild the application">
+    Since `VITE_ELEVENLABS_AGENT_ID` is a build-time variable:
+    
+    ```bash
+    bun run build
+    bun run start
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Voice mode not working">
+    Check that:
+    - `ELEVENLABS_API_KEY` is set correctly
+    - `VITE_ELEVENLABS_AGENT_ID` was set before building
+    - You rebuilt the app after adding the agent ID
+    - Your browser has microphone permissions
+  </Accordion>
+
+  <Accordion title="Sandbox creation fails">
+    Verify:
+    - Your `DAYTONA_API_KEY` is valid
+    - You have sufficient quota in your Daytona account
+    - Network connectivity to Daytona API
+  </Accordion>
+
+  <Accordion title="Images not generating">
+    Ensure:
+    - Both `UNSPLASH_ACCESS_KEY` and `UNSPLASH_SECRET_KEY` are set
+    - Your Unsplash API keys are active
+    - You haven't exceeded Unsplash rate limits
+  </Accordion>
+
+  <Accordion title="Code generation errors">
+    Check:
+    - `GEMINI_API_KEY` is valid and active
+    - You have API quota remaining
+    - The `DEFAULT_MODEL` is set to a valid Gemini model
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Quick start guide"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Build your first voice-generated app
+  </Card>
+  <Card
+    title="Architecture overview"
+    icon="diagram-project"
+    href="/architecture"
+  >
+    Learn how Viber works internally
+  </Card>
+</CardGroup>

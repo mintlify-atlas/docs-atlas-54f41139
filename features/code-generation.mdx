@@ -1,0 +1,444 @@
+---
+title: Code generation
+description: AI-powered code generation using Google Gemini with surgical editing capabilities
+---
+
+Viber uses Google Gemini to generate production-ready React + TypeScript code. The AI understands component architecture, creates modular code, and performs precise surgical edits.
+
+## Generation modes
+
+Viber supports two distinct generation modes:
+
+<CardGroup cols={2}>
+  <Card title="Create mode" icon="plus">
+    Generates a complete new application from scratch with proper component architecture.
+  </Card>
+  
+  <Card title="Edit mode" icon="pencil">
+    Makes surgical changes to existing code while preserving 99% of unchanged content.
+  </Card>
+</CardGroup>
+
+## How generation works
+
+The generation flow is managed by the `useGeneration` hook:
+
+```tsx src/lib/hooks/use-generation.ts
+export interface GenerateOptions {
+  prompt: string;
+  isEdit?: boolean;
+  sandboxId?: string;
+  onStream?: (text: string) => void;
+  onFile?: (file: GeneratedFile) => void;
+  onPackage?: (pkg: string) => void;
+  onComplete?: (files: GeneratedFile[], packages: string[]) => void;
+}
+
+const { generate } = useGeneration();
+
+await generate({
+  prompt: "Create a landing page with hero section",
+  isEdit: false,
+  sandboxId: sandbox.id,
+  onStream: (chunk) => {
+    // Real-time code streaming
+  },
+  onFile: (file) => {
+    // File completed
+  },
+});
+```
+
+### Streaming architecture
+
+Code generation uses Server-Sent Events (SSE) for real-time streaming:
+
+<Steps>
+  <Step title="API request">
+    Frontend sends generation request to `/api/generate/stream`
+  </Step>
+  
+  <Step title="LLM streaming">
+    Server calls Gemini API with `streamText` and forwards chunks to client
+  </Step>
+  
+  <Step title="Incremental parsing">
+    Client parses `<file>` and `<package>` tags incrementally as they arrive
+  </Step>
+  
+  <Step title="Real-time display">
+    UI updates in real-time showing code as it's generated
+  </Step>
+</Steps>
+
+## AI service implementation
+
+The core generation logic uses the Vercel AI SDK:
+
+```tsx src/lib/ai/service.ts
+import { streamText } from "ai";
+import { getModel } from "./provider";
+import { buildSystemPrompt } from "./prompts";
+
+export async function* streamGenerateCode(
+  options: GenerateCodeOptions
+): AsyncGenerator<AnyStreamEvent> {
+  const { prompt, isEdit, model, fileContext } = options;
+  
+  // Build context-aware system prompt
+  const systemPrompt = buildSystemPrompt(isEdit, fileContext);
+  
+  yield { type: "status", message: "Starting code generation..." };
+  
+  // Stream from Gemini
+  const result = await streamText({
+    model: getModel(model),
+    system: systemPrompt,
+    prompt: fullPrompt,
+    temperature: 0.7,
+    maxOutputTokens: 8192,
+    providerOptions: {
+      google: {
+        thinkingLevel: "medium",
+      },
+    },
+  });
+  
+  // Parse and emit events
+  const parser = new IncrementalParser();
+  
+  for await (const chunk of result.textStream) {
+    yield {
+      type: "stream",
+      data: { content: chunk },
+    };
+    
+    const { newFiles, newPackages } = parser.append(chunk);
+    
+    for (const file of newFiles) {
+      yield { type: "file", data: file };
+    }
+  }
+  
+  yield { type: "complete", data: { files, packages } };
+}
+```
+
+<Info>
+Viber uses **Gemini 3.0** models with the `thinkingLevel: "medium"` option for improved reasoning about code architecture.
+</Info>
+
+## Prompting strategy
+
+### Create mode prompt
+
+For new projects, Viber instructs the AI to create modular component architecture:
+
+<Accordion title="View full create mode prompt">
+```txt src/lib/ai/prompts.ts
+CRITICAL ARCHITECTURE RULES (MANDATORY):
+1. ALWAYS break down landing pages/apps into SEPARATE COMPONENT FILES
+2. NEVER create a single monolithic component file
+3. Each section (Hero, Header, Features, etc.) should be its own file
+4. App.tsx should ONLY import and compose these components
+5. This enables surgical edits - when editing "hero section", we edit Hero.tsx
+
+COMPONENT STRUCTURE EXAMPLE:
+- "create a landing page" should generate:
+  * src/components/Header.tsx
+  * src/components/Hero.tsx
+  * src/components/Features.tsx
+  * src/components/Footer.tsx
+  * src/App.tsx (imports and composes all sections)
+
+USE THIS XML FORMAT:
+
+<file path="src/App.tsx">
+import Header from "./components/Header"
+import Hero from "./components/Hero"
+
+function App() {
+  return (
+    <div>
+      <Header />
+      <Hero />
+    </div>
+  )
+}
+
+export default App
+</file>
+
+<file path="src/components/Header.tsx">
+// Header component
+</file>
+
+<package>lucide-react</package>
+```
+</Accordion>
+
+### Edit mode prompt
+
+For edits, Viber emphasizes surgical precision:
+
+<Accordion title="View edit mode principles">
+```txt src/lib/ai/prompts.ts
+KEY PRINCIPLES (CRITICAL):
+1. Minimal Changes: Only modify what's necessary - preserve 99%
+2. Preserve Functionality: Keep all existing features and imports
+3. Target Precision: Edit specific files/components, not everything
+4. Context Awareness: Use imports/exports to understand relationships
+
+EDIT STRATEGY EXAMPLE:
+USER: "update the hero to bg blue"
+
+CORRECT APPROACH:
+1. Identify Hero component: src/components/Hero.tsx
+2. Locate the background color class (e.g., 'bg-gray-900')
+3. Replace ONLY that class with 'bg-blue-500'
+4. Return the ENTIRE file unchanged except for that single class
+
+INCORRECT APPROACH:
+- Regenerating entire file
+- Changing other styles
+- Modifying unrelated components
+```
+</Accordion>
+
+<Tip>
+The AI receives file context for edits, showing it exactly what exists in the sandbox before making changes.
+</Tip>
+
+## Incremental parsing
+
+Viber parses generated code incrementally using a custom parser:
+
+```tsx src/lib/ai/service.ts
+class IncrementalParser {
+  private buffer = "";
+  private emittedFiles = new Set<string>();
+  private emittedPackages = new Set<string>();
+
+  append(chunk: string): {
+    newFiles: GeneratedFile[];
+    newPackages: string[];
+  } {
+    this.buffer += chunk;
+    const newFiles: GeneratedFile[] = [];
+    const newPackages: string[] = [];
+
+    // Parse complete <file> tags
+    const fileRegex = /<file\s+path="([^"]+)">([\s\S]*?)<\/file>/g;
+    let match;
+    while ((match = fileRegex.exec(this.buffer)) !== null) {
+      const path = match[1].trim();
+      if (!this.emittedFiles.has(path)) {
+        this.emittedFiles.add(path);
+        newFiles.push({
+          path,
+          content: match[2].trim(),
+        });
+      }
+    }
+
+    // Parse complete <package> tags
+    const packageRegex = /<package>([^<]+)<\/package>/g;
+    while ((match = packageRegex.exec(this.buffer)) !== null) {
+      const pkg = match[1].trim();
+      if (pkg && !this.emittedPackages.has(pkg)) {
+        this.emittedPackages.add(pkg);
+        newPackages.push(pkg);
+      }
+    }
+
+    return { newFiles, newPackages };
+  }
+}
+```
+
+This parser:
+- Accumulates chunks in a buffer
+- Extracts complete `<file>` and `<package>` tags using regex
+- Deduplicates using Sets to prevent re-emitting
+- Returns only new files/packages per chunk
+
+## File context for edits
+
+When editing, Viber provides the AI with current file contents:
+
+```tsx src/lib/ai/prompts.ts
+export function buildSystemPrompt(
+  isEdit: boolean,
+  fileContext?: Record<string, string>
+): string {
+  let prompt = isEdit ? EDIT_MODE_PROMPT : INITIAL_GENERATION_PROMPT;
+  
+  if (fileContext && Object.keys(fileContext).length > 0) {
+    prompt += FILE_CONTEXT_PROMPT;
+    for (const [path, content] of Object.entries(fileContext)) {
+      if (content.length < 5000) {
+        prompt += `\n<file path="${path}">\n${content}\n</file>\n`;
+      } else {
+        prompt += `\n<file path="${path}">[File too large]</file>\n`;
+      }
+    }
+  }
+  
+  return prompt;
+}
+```
+
+<Note>
+Files larger than 5000 characters are truncated to stay within context limits. The AI receives file paths even for large files.
+</Note>
+
+## Model configuration
+
+Viber uses Google Gemini through the Vercel AI SDK:
+
+```tsx src/lib/ai/provider.ts
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+
+const googleClient = createGoogleGenerativeAI({
+  apiKey: appEnv.GEMINI_API_KEY,
+});
+
+export function getModel(modelId?: string) {
+  const model = modelId ?? appEnv.DEFAULT_MODEL ?? "gemini-3.0-exp";
+  return googleClient(model);
+}
+```
+
+### Supported models
+
+<Tabs>
+  <Tab title="Gemini 3.0 Exp">
+    Experimental model with enhanced reasoning capabilities. Recommended for complex components.
+    
+    ```tsx
+    model: "gemini-3.0-exp"
+    maxOutputTokens: 8192
+    temperature: 0.7
+    ```
+  </Tab>
+  
+  <Tab title="Gemini 2.0 Flash">
+    Fast, production-ready model suitable for most use cases.
+    
+    ```tsx
+    model: "gemini-2.0-flash-exp"
+    maxOutputTokens: 8192
+    temperature: 0.7
+    ```
+  </Tab>
+</Tabs>
+
+## Generation state
+
+The `useGeneration` hook exposes rich state:
+
+```tsx
+interface GenerationState {
+  isGenerating: boolean;      // Currently generating
+  isApplying: boolean;         // Applying to sandbox
+  isChecking: boolean;         // Running diagnostics
+  isStreaming: boolean;        // Actively streaming
+  progress: string;            // Status message
+  streamedCode: string;        // Full accumulated response
+  currentFile: StreamingFile | null;  // File being streamed
+  files: GeneratedFile[];      // Completed files
+  streamingFiles: StreamingFile[];    // Files parsed so far
+  packages: string[];          // Packages to install
+  error: string | null;        // Error message
+}
+```
+
+This enables rich UI feedback during generation.
+
+## Error handling
+
+<CodeGroup>
+```tsx Graceful Degradation
+try {
+  const response = await fetch("/api/generate/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, isEdit, sandboxId }),
+    signal: abortController.signal,
+  });
+  
+  if (!response.ok || !response.body) {
+    throw new Error("Failed to start generation");
+  }
+  
+  // Stream processing...
+} catch (error) {
+  if (error.name === "AbortError") return; // User cancelled
+  
+  setState((prev) => ({
+    ...prev,
+    isGenerating: false,
+    error: error.message,
+  }));
+  onError?.(error.message);
+}
+```
+
+```tsx Abort Controller
+const abortControllerRef = useRef<AbortController | null>(null);
+
+const cancel = useCallback(() => {
+  abortControllerRef.current?.abort();
+  setState((prev) => ({
+    ...prev,
+    isGenerating: false,
+    progress: "Generation cancelled",
+  }));
+}, []);
+```
+</CodeGroup>
+
+## Best practices
+
+<AccordionGroup>
+  <Accordion title="Component modularity">
+    Always generate separate component files rather than monolithic components. This enables surgical edits later.
+    
+    ```tsx
+    // Good: Modular
+    - src/components/Header.tsx
+    - src/components/Hero.tsx
+    - src/App.tsx (composes them)
+    
+    // Bad: Monolithic
+    - src/App.tsx (everything in one file)
+    ```
+  </Accordion>
+  
+  <Accordion title="Clear prompts">
+    Be specific about what you want:
+    
+    - Good: "Create a landing page with a gradient hero, 3-column features grid, and testimonial carousel"
+    - Bad: "Make a website"
+  </Accordion>
+  
+  <Accordion title="Edit precision">
+    When editing, reference specific components:
+    
+    - Good: "Make the header background blue"
+    - Bad: "Change the top color"
+  </Accordion>
+  
+  <Accordion title="Streaming feedback">
+    Use the streaming callbacks to show progress:
+    
+    ```tsx
+    onStream: (chunk) => {
+      // Update UI with streaming code
+    },
+    onFile: (file) => {
+      // Notify user: "Generated Header.tsx"
+    },
+    ```
+  </Accordion>
+</AccordionGroup>

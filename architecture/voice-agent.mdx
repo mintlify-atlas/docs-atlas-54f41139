@@ -1,0 +1,322 @@
+---
+title: Voice agent
+description: ElevenLabs voice agent implementation, tool calling, and conversation management
+---
+
+Viber uses the ElevenLabs Conversational AI platform to enable voice-first interaction. The voice agent manages the conversation loop, interprets user intent, and triggers actions through client-side tool calls.
+
+## Voice agent setup
+
+The voice agent is implemented using the `@elevenlabs/react` SDK:
+
+```typescript
+import { useConversation } from "@elevenlabs/react";
+
+const conversation = useConversation({
+  clientTools: {
+    vibe_build: async ({ prompt, action }) => { /* ... */ },
+    navigate_ui: ({ panel }) => { /* ... */ },
+  },
+  onConnect: () => onStatusChange("connected"),
+  onDisconnect: () => onStatusChange("disconnected"),
+  onMessage: (message) => { /* ... */ },
+  onError: (error) => { /* ... */ },
+});
+```
+
+### Connection lifecycle
+
+The voice agent follows a standard WebSocket lifecycle:
+
+<Steps>
+  <Step title="Start session">
+    ```typescript
+    await conversation.startSession({
+      agentId: AGENT_ID,
+      connectionType: "websocket",
+    });
+    ```
+  </Step>
+  
+  <Step title="Connected">
+    Agent is ready to receive voice input and can trigger tool calls
+  </Step>
+  
+  <Step title="End session">
+    ```typescript
+    conversation.endSession();
+    ```
+  </Step>
+</Steps>
+
+## Client-side tools
+
+The voice agent uses two primary tools to control the application:
+
+### vibe_build tool
+
+Triggers code generation or editing:
+
+```typescript src/components/builder/voice/voice-agent.tsx
+vibe_build: async ({ prompt, action }: VibeBuildParams) => {
+  console.log("[VoiceAgent] vibe_build called");
+  console.log("[VoiceAgent] prompt:", prompt);
+  console.log("[VoiceAgent] action:", action);
+
+  if (!prompt) {
+    return "Error: Missing prompt parameter";
+  }
+
+  // For edits, require both action="edit" AND sandbox to be ready
+  const isEdit = action === "edit";
+
+  if (isEdit && !isReadyRef.current) {
+    return "Error: Sandbox is not ready yet. Please wait for the workspace to finish setting up.";
+  }
+
+  if (isEdit && !sandboxIdRef.current) {
+    return "Error: No sandbox available. Please create a project first.";
+  }
+
+  try {
+    await onGenerateRef.current({
+      prompt,
+      isEdit,
+      sandboxId: sandboxIdRef.current,
+    });
+
+    if (isEdit) {
+      return "Starting to make those changes now.";
+    } else {
+      return "Generation started successfully. I will provide updates as files are created.";
+    }
+  } catch (error) {
+    return `Error: ${error instanceof Error ? error.message : "Unknown error"}`;
+  }
+}
+```
+
+<Tabs>
+  <Tab title="Parameters">
+    | Parameter | Type | Description |
+    |-----------|------|-------------|
+    | `prompt` | `string` | User's description of what to build or change |
+    | `action` | `"create" \| "edit"` | Whether to create new code or edit existing code |
+  </Tab>
+  
+  <Tab title="Return value">
+    Returns a string message that the voice agent speaks back to the user:
+    - Success: "Generation started successfully..."
+    - Error: "Error: Sandbox is not ready yet..."
+  </Tab>
+  
+  <Tab title="Example">
+    **User says**: "Create a landing page for a coffee shop"
+    
+    **Tool call**:
+    ```json
+    {
+      "tool_name": "vibe_build",
+      "parameters": {
+        "prompt": "Create a landing page for a coffee shop",
+        "action": "create"
+      }
+    }
+    ```
+    
+    **Agent response**: "Generation started successfully. I will provide updates as files are created."
+  </Tab>
+</Tabs>
+
+### navigate_ui tool
+
+Changes the active panel in the UI:
+
+```typescript src/components/builder/voice/voice-agent.tsx
+navigate_ui: ({ panel }: NavigateUiParams) => {
+  console.log("[VoiceAgent] navigate_ui called", { panel });
+
+  const result = onNavigate(panel);
+  console.log("[VoiceAgent] navigate_ui result:", result);
+
+  return result.message;
+}
+```
+
+<Tabs>
+  <Tab title="Parameters">
+    | Parameter | Type | Description |
+    |-----------|------|-------------|
+    | `panel` | `"preview" \| "code" \| "files"` | Target panel to navigate to |
+  </Tab>
+  
+  <Tab title="Example">
+    **User says**: "Show me the code"
+    
+    **Tool call**:
+    ```json
+    {
+      "tool_name": "navigate_ui",
+      "parameters": {
+        "panel": "code"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## System updates
+
+Viber sends **system updates** to the voice agent as code is being generated:
+
+```typescript
+function sendSystemUpdate(message: string) {
+  if (conversation.status === "connected") {
+    // Prefix with [UPDATE] so the agent knows to repeat it verbatim
+    conversation.sendUserMessage(`[UPDATE] ${message}`);
+  }
+}
+
+// Usage during code generation
+sendSystemUpdate("Created Hero.tsx");
+sendSystemUpdate("Created Features.tsx");
+sendSystemUpdate("Generation complete");
+```
+
+<Info>
+The `[UPDATE]` prefix is recognized by the agent's prompt and causes it to repeat the message verbatim to the user, providing real-time narration of progress.
+</Info>
+
+## Message handling
+
+The voice agent processes messages from the user and the assistant:
+
+```typescript src/components/builder/voice/voice-agent.tsx
+onMessage: (message) => {
+  console.log("[VoiceAgent] Message:", message);
+  if (message.message && message.source !== "user") {
+    onMessage({
+      role: "assistant",
+      content: message.message,
+      timestamp: new Date(),
+    });
+  }
+}
+```
+
+Messages are displayed in the chat transcript, providing a written record of the conversation.
+
+## Audio volume monitoring
+
+The voice agent provides real-time audio levels:
+
+```typescript
+const inputVolume = conversation.getInputVolume?.() ?? 0;
+const outputVolume = conversation.getOutputVolume?.() ?? 0;
+```
+
+These values can be used to create visual feedback (e.g., microphone icon animation) while the user is speaking.
+
+## Error handling
+
+<CodeGroup>
+```typescript Connection errors
+onError: (error) => {
+  console.error("[VoiceAgent] Error:", error);
+  onStatusChange("disconnected");
+}
+```
+
+```typescript Tool call errors
+if (isEdit && !sandboxIdRef.current) {
+  return "Error: No sandbox available. Please create a project first.";
+}
+```
+
+```typescript Unhandled tools
+onUnhandledClientToolCall: (toolCall) => {
+  console.warn("[VoiceAgent] Unhandled tool call:", toolCall.tool_name);
+  console.warn("[VoiceAgent] Tool call details:", toolCall);
+}
+```
+</CodeGroup>
+
+## Global voice agent instance
+
+Viber maintains a global reference to the voice agent for use throughout the application:
+
+```typescript src/components/builder/voice/voice-agent.tsx
+let globalVoiceAgent: {
+  sendSystemUpdate: (message: string) => void;
+  startSession: () => Promise<void>;
+  endSession: () => void;
+  getInputVolume: () => number;
+  getOutputVolume: () => number;
+} | null = null;
+
+export function useVoiceAgentControls() {
+  return {
+    sendSystemUpdate: (message: string) => {
+      globalVoiceAgent?.sendSystemUpdate(message);
+    },
+    startSession: async () => {
+      await globalVoiceAgent?.startSession();
+    },
+    endSession: () => {
+      globalVoiceAgent?.endSession();
+    },
+    getInputVolume: () => globalVoiceAgent?.getInputVolume() ?? 0,
+    getOutputVolume: () => globalVoiceAgent?.getOutputVolume() ?? 0,
+  };
+}
+```
+
+## Best practices
+
+<AccordionGroup>
+  <Accordion title="Use refs for dynamic values">
+    Since the tool functions are defined once during component initialization, use refs to access the latest values:
+    
+    ```typescript
+    const sandboxIdRef = useRef(sandboxId);
+    const isReadyRef = useRef(isReady);
+    
+    useEffect(() => {
+      sandboxIdRef.current = sandboxId;
+      isReadyRef.current = isReady;
+    }, [sandboxId, isReady]);
+    ```
+  </Accordion>
+  
+  <Accordion title="Return clear error messages">
+    Tool functions should return user-friendly error messages that the agent can speak:
+    
+    ```typescript
+    if (!prompt) {
+      return "Error: Missing prompt parameter";
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Log tool calls for debugging">
+    Console logs help debug tool calling issues:
+    
+    ```typescript
+    console.log("[VoiceAgent] vibe_build called");
+    console.log("[VoiceAgent] prompt:", prompt);
+    console.log("[VoiceAgent] action:", action);
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Code agent" icon="code" href="/architecture/code-agent">
+    Learn how code generation works with Gemini
+  </Card>
+  
+  <Card title="Sandbox" icon="cube" href="/architecture/sandbox">
+    Explore how generated code is executed
+  </Card>
+</CardGroup>

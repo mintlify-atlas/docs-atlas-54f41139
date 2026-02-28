@@ -1,0 +1,548 @@
+---
+title: Code agent
+description: Gemini code generation, prompts, streaming, and context management
+---
+
+Viber uses Google Gemini to generate and edit React/TypeScript code. The code agent is designed for component-based architecture and context-aware editing.
+
+## Code generation flow
+
+<Steps>
+  <Step title="Request arrives">
+    API endpoint receives a generation request with prompt, edit flag, and optional context
+  </Step>
+  
+  <Step title="Context selection">
+    For edits, an LLM-based intent analyzer selects relevant files from the sandbox
+  </Step>
+  
+  <Step title="Prompt construction">
+    System prompt is built with generation rules, file context, and recent conversation history
+  </Step>
+  
+  <Step title="Streaming generation">
+    Gemini generates code in XML format, streamed incrementally to the client
+  </Step>
+  
+  <Step title="Parsing and application">
+    Files are parsed from XML tags and written to the sandbox as they arrive
+  </Step>
+</Steps>
+
+## API endpoint
+
+The generation API streams results using Server-Sent Events:
+
+```typescript src/routes/api/generate/stream.ts
+export const Route = createFileRoute("/api/generate/stream")({
+  server: {
+    handlers: {
+      POST: async ({ request }) => {
+        const { prompt, isEdit, sandboxId, context } = await request.json();
+
+        // Smart file selection for edits
+        let fileContext = context?.files;
+        if (isEdit && sandboxId && !fileContext) {
+          const fileListResult = await getSandboxFileList(sandboxId);
+          const intentResult = await selectFilesForEdit(
+            prompt,
+            fileListResult.files
+          );
+          const contentsResult = await getSandboxFileContents(
+            intentResult.targetFiles,
+            sandboxId
+          );
+          fileContext = contentsResult.files;
+        }
+
+        // Stream generation
+        const stream = new ReadableStream({
+          async start(controller) {
+            const generator = streamGenerateCode({
+              prompt,
+              isEdit: isEdit ?? false,
+              fileContext,
+              recentMessages: context?.recentMessages,
+            });
+
+            for await (const event of generator) {
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
+              );
+            }
+          },
+        });
+
+        return new Response(stream, {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+          },
+        });
+      },
+    },
+  },
+});
+```
+
+## System prompts
+
+Viber uses two main system prompts:
+
+### Initial generation prompt
+
+For creating new projects:
+
+```typescript src/lib/ai/prompts.ts
+export const INITIAL_GENERATION_PROMPT = `You are an expert React + TypeScript developer. Generate clean, modern React code with TypeScript for Vite applications.
+
+CRITICAL ARCHITECTURE RULES (MANDATORY):
+1. ALWAYS break down landing pages/apps into SEPARATE COMPONENT FILES - one component per section/feature
+2. NEVER create a single monolithic component file
+3. Each section (Hero, Header, Features, Footer, etc.) should be its own component file
+4. App.tsx should ONLY import and compose these section components together
+5. This enables surgical edits - when user wants to edit "hero section", we edit Hero.tsx, not the entire page
+
+COMPONENT STRUCTURE EXAMPLE:
+- "create a landing page" should generate:
+  * src/components/Header.tsx (navigation/header section)
+  * src/components/Hero.tsx (hero section)
+  * src/components/Features.tsx (features section)
+  * src/components/Footer.tsx (footer section)
+  * src/App.tsx (imports and composes all sections)
+
+CRITICAL RULES:
+1. Use Tailwind CSS v4 for ALL styling
+2. Use lucide-react for ALL icons
+3. Create functional components with hooks
+4. Use TSX syntax and modern TypeScript
+5. Handle edge cases gracefully
+6. NEVER touch or modify tsconfig.json
+
+USE THIS XML FORMAT:
+
+<file path="src/App.tsx">
+import Header from "./components/Header"
+import Hero from "./components/Hero"
+
+function App() {
+  return (
+    <div>
+      <Header />
+      <Hero />
+    </div>
+  )
+}
+
+export default App
+</file>
+
+<file path="src/components/Header.tsx">
+// Header component code
+</file>
+
+<package>package-name</package>`;
+```
+
+<Note>
+The prompt enforces **component-based architecture** to enable surgical edits later. Each section of a landing page becomes its own component file.
+</Note>
+
+### Edit mode prompt
+
+For modifying existing code:
+
+```typescript src/lib/ai/prompts.ts
+export const EDIT_MODE_PROMPT = `You are an expert React + TypeScript developer modifying an existing application.
+
+OUTPUT FORMAT:
+Use this XML format for ALL output - both modified and new files:
+
+<file path="src/components/Header.tsx">
+// Complete modified file content here
+</file>
+
+KEY PRINCIPLES:
+1. **Minimal Changes**: Only modify what's necessary - preserve 99% of existing code
+2. **Preserve Functionality**: Keep all existing features, imports, and structure
+3. **Target Precision**: Edit specific files/components, not everything
+
+EDIT STRATEGY EXAMPLES:
+
+### Update Single Style
+USER: "update the hero to bg blue"
+
+CORRECT APPROACH:
+1. Identify Hero component: src/components/Hero.tsx
+2. Locate the background color class (e.g., 'bg-gray-900')
+3. Replace ONLY that class with 'bg-blue-500'
+4. Return the ENTIRE file unchanged except for that single class
+
+### Add New Component
+USER: "Add a newsletter signup to the footer"
+
+CORRECT APPROACH:
+1. Create Newsletter.tsx component
+2. UPDATE Footer.tsx to import Newsletter
+3. Add <Newsletter /> in appropriate place in Footer
+4. Preserve all existing Footer content
+
+EXPECTED OUTPUT:
+<file path="src/components/Newsletter.tsx">
+// New Newsletter component
+</file>
+
+<file path="src/components/Footer.tsx">
+import Newsletter from './Newsletter';
+// ... existing code preserved ...
+// Add <Newsletter /> in the render
+</file>`;
+```
+
+<Info>
+The edit prompt emphasizes **minimal changes** and **surgical precision**. The goal is to modify only what's necessary while preserving 99% of existing code.
+</Info>
+
+## Prompt construction
+
+The system prompt is built dynamically based on the request:
+
+```typescript src/lib/ai/prompts.ts
+export function buildSystemPrompt(
+  isEdit: boolean,
+  fileContext?: Record<string, string>
+): string {
+  let prompt = isEdit ? EDIT_MODE_PROMPT : INITIAL_GENERATION_PROMPT;
+
+  if (fileContext && Object.keys(fileContext).length > 0) {
+    prompt += FILE_CONTEXT_PROMPT;
+    for (const [path, content] of Object.entries(fileContext)) {
+      if (content.length < 5000) {
+        prompt += `\n<file path="${path}">\n${content}\n</file>\n`;
+      } else {
+        prompt += `\n<file path="${path}">[File too large - ${content.length} chars]</file>\n`;
+      }
+    }
+  }
+
+  return prompt;
+}
+```
+
+<Tabs>
+  <Tab title="Create mode">
+    Uses `INITIAL_GENERATION_PROMPT` with no file context:
+    
+    ```typescript
+    const prompt = buildSystemPrompt(false);
+    // Returns: INITIAL_GENERATION_PROMPT
+    ```
+  </Tab>
+  
+  <Tab title="Edit mode">
+    Uses `EDIT_MODE_PROMPT` with file context:
+    
+    ```typescript
+    const prompt = buildSystemPrompt(true, {
+      "src/components/Hero.tsx": "function Hero() { ... }",
+      "src/App.tsx": "import Hero from './components/Hero'",
+    });
+    // Returns: EDIT_MODE_PROMPT + file context
+    ```
+  </Tab>
+</Tabs>
+
+## Streaming generation
+
+Code is generated using the Vercel AI SDK with streaming:
+
+```typescript src/lib/ai/service.ts
+export async function* streamGenerateCode(
+  options: GenerateCodeOptions
+): AsyncGenerator<AnyStreamEvent> {
+  const {
+    prompt,
+    isEdit = false,
+    model,
+    fileContext,
+    recentMessages,
+  } = options;
+
+  const systemPrompt = buildSystemPrompt(isEdit, fileContext);
+  const conversationContext = formatConversationHistory(recentMessages || []);
+  const fullPrompt = conversationContext + prompt;
+
+  yield { type: "status", message: "Starting code generation..." };
+
+  const selectedModel = model ?? appEnv.DEFAULT_MODEL ?? "gemini-3-pro";
+  const result = await streamText({
+    model: getModel(model),
+    system: systemPrompt,
+    prompt: fullPrompt,
+    temperature: 0.7,
+    maxOutputTokens: 8000,
+    ...(selectedModel.includes("gemini-3") && {
+      providerOptions: {
+        google: {
+          thinkingLevel: "medium" as const,
+        },
+      },
+    }),
+  });
+
+  const parser = new IncrementalParser();
+
+  for await (const chunk of result.textStream) {
+    yield {
+      type: "stream",
+      data: { content: chunk, index: parser.getRawResponse().length },
+    };
+
+    const { newFiles, newPackages } = parser.append(chunk);
+
+    for (const file of newFiles) {
+      yield {
+        type: "file",
+        data: { path: file.path, content: file.content },
+      };
+    }
+
+    for (const pkg of newPackages) {
+      yield {
+        type: "package",
+        data: { name: pkg },
+      };
+    }
+  }
+
+  const { files, packages } = parser.getAll();
+
+  yield {
+    type: "complete",
+    data: { files, packages },
+  };
+}
+```
+
+## Incremental parsing
+
+Files are parsed from the stream as they arrive:
+
+```typescript src/lib/ai/service.ts
+class IncrementalParser {
+  private buffer = "";
+  private emittedFiles = new Set<string>();
+  private emittedPackages = new Set<string>();
+
+  append(chunk: string): {
+    newFiles: GeneratedFile[];
+    newPackages: string[];
+  } {
+    this.buffer += chunk;
+    const newFiles: GeneratedFile[] = [];
+    const newPackages: string[] = [];
+
+    // Parse <file path="...">...</file> tags
+    const fileRegex = /<file\s+path="([^"]+)">([\s\S]*?)<\/file>/g;
+    let match;
+    while ((match = fileRegex.exec(this.buffer)) !== null) {
+      const path = match[1].trim();
+      if (!this.emittedFiles.has(path)) {
+        this.emittedFiles.add(path);
+        newFiles.push({
+          path,
+          content: match[2].trim(),
+        });
+      }
+    }
+
+    // Parse <package>...</package> tags
+    const packageRegex = /<package>([^<]+)<\/package>/g;
+    while ((match = packageRegex.exec(this.buffer)) !== null) {
+      const pkg = match[1].trim();
+      if (pkg && !this.emittedPackages.has(pkg)) {
+        this.emittedPackages.add(pkg);
+        newPackages.push(pkg);
+      }
+    }
+
+    return { newFiles, newPackages };
+  }
+}
+```
+
+<Note>
+The parser tracks emitted files/packages to avoid duplicates and enables **real-time file writing** as the LLM generates code.
+</Note>
+
+## Context-aware file selection
+
+For edits, Viber uses an LLM-based intent analyzer to select relevant files:
+
+```typescript src/lib/helpers/llm-intent-analyzer.ts
+export async function selectFilesForEdit(
+  prompt: string,
+  availableFiles: string[]
+): Promise<{
+  targetFiles: string[];
+  editType: string;
+  confidence: number;
+}> {
+  // Use LLM to analyze user intent
+  const response = await analyzeIntent(prompt, availableFiles);
+  
+  // Returns: { targetFiles: ["src/components/Hero.tsx"], editType: "style" }
+}
+```
+
+<Tabs>
+  <Tab title="Example 1">
+    **Prompt**: "update the hero to bg blue"
+    
+    **Result**:
+    ```json
+    {
+      "targetFiles": ["src/components/Hero.tsx"],
+      "editType": "style",
+      "confidence": 0.95
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Example 2">
+    **Prompt**: "add a contact form to the footer"
+    
+    **Result**:
+    ```json
+    {
+      "targetFiles": ["src/components/Footer.tsx"],
+      "editType": "feature",
+      "confidence": 0.88
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Example 3">
+    **Prompt**: "rebuild the entire landing page"
+    
+    **Result**:
+    ```json
+    {
+      "targetFiles": ["src/App.tsx", "src/components/Hero.tsx", "..."],
+      "editType": "rebuild",
+      "confidence": 0.92
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Stream event types
+
+<CodeGroup>
+```typescript Status event
+{
+  type: "status",
+  message: "Starting code generation..."
+}
+```
+
+```typescript Stream event
+{
+  type: "stream",
+  data: {
+    content: "function Hero() {",
+    index: 1024
+  }
+}
+```
+
+```typescript File event
+{
+  type: "file",
+  data: {
+    path: "src/components/Hero.tsx",
+    content: "function Hero() { ... }"
+  }
+}
+```
+
+```typescript Package event
+{
+  type: "package",
+  data: {
+    name: "lucide-react"
+  }
+}
+```
+
+```typescript Complete event
+{
+  type: "complete",
+  data: {
+    files: [{ path: "...", content: "..." }],
+    packages: ["lucide-react"]
+  }
+}
+```
+
+```typescript Error event
+{
+  type: "error",
+  message: "Generation failed"
+}
+```
+</CodeGroup>
+
+## Best practices
+
+<AccordionGroup>
+  <Accordion title="Enforce component architecture">
+    Always break landing pages into separate component files:
+    
+    ```typescript
+    // Good: Multiple component files
+    src/components/Header.tsx
+    src/components/Hero.tsx
+    src/components/Features.tsx
+    src/App.tsx // Composes them
+    
+    // Bad: Single monolithic file
+    src/App.tsx // Contains everything
+    ```
+  </Accordion>
+  
+  <Accordion title="Use surgical edits">
+    For edits, only provide context for relevant files:
+    
+    ```typescript
+    // User: "update hero to bg blue"
+    const fileContext = {
+      "src/components/Hero.tsx": heroContent, // Only Hero.tsx
+    };
+    ```
+  </Accordion>
+  
+  <Accordion title="Include conversation history">
+    Recent messages help the LLM understand context:
+    
+    ```typescript
+    const recentMessages = [
+      { role: "user", content: "Create a landing page" },
+      { role: "assistant", content: "I've created a landing page..." },
+      { role: "user", content: "Make the hero blue" },
+    ];
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Voice agent" icon="microphone" href="/architecture/voice-agent">
+    Learn how voice triggers code generation
+  </Card>
+  
+  <Card title="Sandbox" icon="cube" href="/architecture/sandbox">
+    Explore how generated code is executed
+  </Card>
+</CardGroup>

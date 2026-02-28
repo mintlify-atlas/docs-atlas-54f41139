@@ -1,0 +1,353 @@
+---
+title: useVoiceAgentControls
+description: React hook for controlling voice agent sessions and sending system updates
+---
+
+The `useVoiceAgentControls` hook provides methods to control the ElevenLabs voice agent, including starting/ending sessions, sending system updates, and monitoring audio levels.
+
+## Hook signature
+
+```typescript
+function useVoiceAgentControls(): VoiceAgentControls
+```
+
+## Return value
+
+The hook returns an object with control methods:
+
+<ResponseField name="sendSystemUpdate" type="(message: string) => void">
+  Send a system update message to the voice agent that will be announced
+</ResponseField>
+
+<ResponseField name="startSession" type="() => Promise<void>">
+  Start a voice agent session with ElevenLabs
+</ResponseField>
+
+<ResponseField name="endSession" type="() => void">
+  End the current voice agent session
+</ResponseField>
+
+<ResponseField name="getInputVolume" type="() => number">
+  Get the current microphone input volume level (0-1)
+</ResponseField>
+
+<ResponseField name="getOutputVolume" type="() => number">
+  Get the current speaker output volume level (0-1)
+</ResponseField>
+
+## Usage examples
+
+### Starting and ending sessions
+
+```tsx
+import { useVoiceAgentControls } from '@/components/builder/voice/voice-agent';
+import { useState } from 'react';
+
+function VoiceControl() {
+  const voiceAgent = useVoiceAgentControls();
+  const [isConnected, setIsConnected] = useState(false);
+
+  const handleConnect = async () => {
+    try {
+      await voiceAgent.startSession();
+      setIsConnected(true);
+    } catch (error) {
+      console.error('Failed to start session:', error);
+    }
+  };
+
+  const handleDisconnect = () => {
+    voiceAgent.endSession();
+    setIsConnected(false);
+  };
+
+  return (
+    <div>
+      {isConnected ? (
+        <button onClick={handleDisconnect}>
+          Disconnect
+        </button>
+      ) : (
+        <button onClick={handleConnect}>
+          Connect
+        </button>
+      )}
+    </div>
+  );
+}
+```
+
+### Sending system updates
+
+```tsx
+import { useVoiceAgentControls } from '@/components/builder/voice/voice-agent';
+import { useEffect } from 'react';
+
+function GenerationNotifier({ isGenerating }: { isGenerating: boolean }) {
+  const voiceAgent = useVoiceAgentControls();
+
+  useEffect(() => {
+    if (isGenerating) {
+      voiceAgent.sendSystemUpdate('Alright, let me build that for you');
+    }
+  }, [isGenerating, voiceAgent]);
+
+  return null;
+}
+```
+
+### Monitoring audio levels
+
+```tsx
+import { useVoiceAgentControls } from '@/components/builder/voice/voice-agent';
+import { useEffect, useState } from 'react';
+
+function AudioVisualizer() {
+  const voiceAgent = useVoiceAgentControls();
+  const [inputLevel, setInputLevel] = useState(0);
+  const [outputLevel, setOutputLevel] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setInputLevel(voiceAgent.getInputVolume());
+      setOutputLevel(voiceAgent.getOutputVolume());
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [voiceAgent]);
+
+  return (
+    <div className="audio-levels">
+      <div className="level">
+        <span>Input</span>
+        <div className="bar" style={{ width: `${inputLevel * 100}%` }} />
+      </div>
+      <div className="level">
+        <span>Output</span>
+        <div className="bar" style={{ width: `${outputLevel * 100}%` }} />
+      </div>
+    </div>
+  );
+}
+```
+
+### Voice sidebar integration
+
+```tsx
+import { useVoiceAgentControls } from '@/components/builder/voice/voice-agent';
+import { useCallback, useState } from 'react';
+
+function VoiceSidebar() {
+  const voiceControls = useVoiceAgentControls();
+  const [status, setStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
+
+  const handleConnect = useCallback(() => {
+    voiceControls.startSession();
+  }, [voiceControls]);
+
+  const handleDisconnect = useCallback(() => {
+    voiceControls.endSession();
+  }, [voiceControls]);
+
+  const isConnected = status === 'connected';
+  const isConnecting = status === 'connecting';
+
+  return (
+    <aside className="voice-sidebar">
+      <div className="controls">
+        {isConnected ? (
+          <button onClick={handleDisconnect}>
+            End Session
+          </button>
+        ) : (
+          <button
+            onClick={handleConnect}
+            disabled={isConnecting}
+          >
+            {isConnecting ? 'Connecting...' : 'Start Voice'}
+          </button>
+        )}
+      </div>
+      
+      <div className="status">
+        {isConnected && <p>Voice agent is listening</p>}
+      </div>
+    </aside>
+  );
+}
+```
+
+### Builder page integration
+
+```tsx
+import { useVoiceAgentControls } from '@/components/builder/voice/voice-agent';
+import { useSandbox } from '@/lib/hooks/use-sandbox';
+import { useEffect, useRef } from 'react';
+
+function BuilderPage() {
+  const sandbox = useSandbox();
+  const voiceAgent = useVoiceAgentControls();
+  const prevSandboxReady = useRef(false);
+
+  // Auto-start voice session when sandbox is ready
+  useEffect(() => {
+    if (sandbox.isReady && !prevSandboxReady.current) {
+      setTimeout(() => {
+        voiceAgent.startSession().catch((err) => {
+          console.warn('Failed to auto-start voice session:', err);
+        });
+      }, 800);
+    }
+    prevSandboxReady.current = sandbox.isReady;
+  }, [sandbox.isReady, voiceAgent]);
+
+  return (
+    <div className="builder">
+      {/* Your builder UI */}
+    </div>
+  );
+}
+```
+
+### Announcing file generation progress
+
+```tsx
+import { useVoiceAgentControls } from '@/components/builder/voice/voice-agent';
+import { useGeneration } from '@/lib/hooks/use-generation';
+import { useEffect, useRef } from 'react';
+
+function GenerationAnnouncer() {
+  const generation = useGeneration();
+  const voiceAgent = useVoiceAgentControls();
+  const announcedCountRef = useRef(0);
+
+  useEffect(() => {
+    const MAX_ANNOUNCEMENTS = 4;
+    const totalCompleted = generation.streamingFiles.length;
+
+    if (
+      generation.isGenerating &&
+      totalCompleted > 0 &&
+      announcedCountRef.current < MAX_ANNOUNCEMENTS
+    ) {
+      const shouldAnnounce =
+        (announcedCountRef.current === 0 && totalCompleted >= 1) ||
+        (announcedCountRef.current === 1 && totalCompleted >= 3) ||
+        (announcedCountRef.current === 2 && totalCompleted >= 5) ||
+        (announcedCountRef.current === 3 && totalCompleted >= 7);
+
+      if (shouldAnnounce) {
+        voiceAgent.sendSystemUpdate(
+          `I've created ${totalCompleted} file${totalCompleted === 1 ? '' : 's'} so far`
+        );
+        announcedCountRef.current++;
+      }
+    }
+  }, [generation.streamingFiles.length, generation.isGenerating, voiceAgent]);
+
+  return null;
+}
+```
+
+## System update format
+
+System updates sent via `sendSystemUpdate()` are prefixed with `[UPDATE]` internally. The voice agent's prompt is configured to recognize this pattern and announce the message verbatim.
+
+```tsx
+// When you call:
+voiceAgent.sendSystemUpdate('Generation complete');
+
+// The agent receives:
+// "[UPDATE] Generation complete"
+// And announces: "Generation complete"
+```
+
+## Global state pattern
+
+The hook uses a global singleton pattern to maintain voice agent state across component renders. This allows:
+
+- Multiple components to control the same voice session
+- Consistent state even if the hook is called from different components
+- Reliable cleanup when components unmount
+
+```tsx
+// Global reference (internal)
+let globalVoiceAgent: {
+  sendSystemUpdate: (message: string) => void;
+  startSession: () => Promise<void>;
+  endSession: () => void;
+  getInputVolume: () => number;
+  getOutputVolume: () => number;
+} | null = null;
+```
+
+## VoiceAgent component
+
+The `VoiceAgent` component must be rendered to initialize the voice agent. It handles:
+
+- ElevenLabs conversation setup
+- Client tool registration
+- Connection status management
+- Message handling
+
+```tsx
+import { VoiceAgent } from '@/components/builder/voice/voice-agent';
+
+function App() {
+  return (
+    <>
+      <VoiceAgent
+        onStatusChange={(status) => console.log('Status:', status)}
+        onMessage={(message) => console.log('Message:', message)}
+        onNavigate={(panel) => ({ success: true, message: 'Navigated' })}
+        onGenerate={async (options) => { /* ... */ }}
+        sandboxId={sandboxId}
+        isReady={isReady}
+      />
+      {/* Your app */}
+    </>
+  );
+}
+```
+
+## Session lifecycle
+
+1. **Disconnected** - No active session
+2. **Connecting** - `startSession()` called, connecting to ElevenLabs
+3. **Connected** - WebSocket established, agent listening
+4. **Disconnected** - `endSession()` called or connection lost
+
+## Error handling
+
+The hook gracefully handles errors:
+
+- Returns default values (0) when agent not connected
+- Logs warnings when sending updates to disconnected agent
+- Catches session start failures without throwing
+
+```tsx
+const voiceAgent = useVoiceAgentControls();
+
+// Safe to call even if not connected
+voiceAgent.sendSystemUpdate('Hello'); // Logs warning if disconnected
+
+const volume = voiceAgent.getInputVolume(); // Returns 0 if not connected
+```
+
+## Volume monitoring
+
+Volume levels are normalized to 0-1 range:
+
+- `0` = Silence
+- `0.5` = Medium volume
+- `1.0` = Maximum volume
+
+Use polling to continuously monitor levels:
+
+```tsx
+setInterval(() => {
+  const input = voiceAgent.getInputVolume();
+  const output = voiceAgent.getOutputVolume();
+  updateVisualizer(input, output);
+}, 100); // Update every 100ms
+```

@@ -1,0 +1,172 @@
+---
+title: Environment setup
+description: Configure all required environment variables for Viber
+---
+
+Viber requires several API keys and configuration values to function. This guide explains each environment variable and how to obtain the necessary credentials.
+
+## Required environment variables
+
+These environment variables must be set for Viber to run:
+
+### Gemini API key
+
+```bash
+GEMINI_API_KEY=your_gemini_api_key_here
+```
+
+Used for the AI code generation agent. Get your API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
+
+### Daytona sandbox API key
+
+```bash
+DAYTONA_API_KEY=your_daytona_api_key_here
+```
+
+Required for creating and managing sandboxed development environments where generated code runs.
+
+<Note>
+In the source code, this variable is referenced as `SANDBOX_API_KEY` in some deployment examples, but the actual environment variable name is `DAYTONA_API_KEY` as defined in `src/lib/env/env.server.ts`.
+</Note>
+
+### Unsplash API credentials
+
+```bash
+UNSPLASH_ACCESS_KEY=your_unsplash_access_key
+UNSPLASH_SECRET_KEY=your_unsplash_secret_key
+```
+
+Viber translates AI-generated image descriptions into real images using Unsplash. Create an app at [Unsplash Developers](https://unsplash.com/developers) to get your keys.
+
+## Optional environment variables
+
+These variables enable additional features but are not required for basic functionality:
+
+### ElevenLabs voice agent
+
+```bash
+ELEVENLABS_API_KEY=your_elevenlabs_api_key
+VITE_ELEVENLABS_AGENT_ID=your_agent_id
+```
+
+<Warning>
+The `VITE_ELEVENLABS_AGENT_ID` variable is a client-side environment variable that gets compiled into the frontend during build. If you change this value, you must rebuild the application.
+</Warning>
+
+Required only if you want to enable voice interaction mode. Get your credentials from [ElevenLabs](https://elevenlabs.io/).
+
+### AI model configuration
+
+```bash
+DEFAULT_MODEL=gemini-3-pro
+```
+
+Specifies which Gemini model to use. Available options:
+
+- `gemini-3-pro` (default)
+- `gemini-3-flash`
+- `gemini-2.0-flash`
+- `gemini-2.5-flash`
+- `gemini-2.5-pro`
+
+### Image CDN base URL
+
+```bash
+IMAGE_CDN_BASE_URL=https://your-app-domain.com
+```
+
+Useful when the sandbox needs a public origin for image URLs. 
+
+<Accordion title="When to use IMAGE_CDN_BASE_URL">
+  In development, you can point this to your ngrok or forwarded URL. In production, set it to your public app domain or leave undefined to use relative `/images` paths.
+
+  From `src/lib/env/env.server.ts:48`:
+  ```typescript
+  // Image CDN base URL (for LLM-generated image src)
+  // In development, point this to your ngrok/forwarded URL for this app.
+  // In production, set it to your public app domain or leave undefined to use relative /images.
+  IMAGE_CDN_BASE_URL: optionalEnv("IMAGE_CDN_BASE_URL"),
+  ```
+</Accordion>
+
+## Creating your .env file
+
+<Steps>
+  <Step title="Create the file">
+    In your project root, create a `.env` file:
+
+    ```bash
+    touch .env
+    ```
+  </Step>
+
+  <Step title="Add required variables">
+    Add all required environment variables:
+
+    ```bash
+    GEMINI_API_KEY=your_gemini_api_key_here
+    DAYTONA_API_KEY=your_daytona_api_key_here
+    UNSPLASH_ACCESS_KEY=your_unsplash_access_key
+    UNSPLASH_SECRET_KEY=your_unsplash_secret_key
+    ```
+  </Step>
+
+  <Step title="Add optional variables">
+    Include any optional variables you need:
+
+    ```bash
+    # Optional: Voice mode
+    ELEVENLABS_API_KEY=your_elevenlabs_api_key
+    VITE_ELEVENLABS_AGENT_ID=your_agent_id
+
+    # Optional: Custom model
+    DEFAULT_MODEL=gemini-2.5-pro
+
+    # Optional: Image CDN
+    IMAGE_CDN_BASE_URL=https://your-app.com
+    ```
+  </Step>
+
+  <Step title="Verify configuration">
+    Start the development server to verify your configuration:
+
+    ```bash
+    bun run dev
+    ```
+
+    The app will throw an error if any required variables are missing.
+  </Step>
+</Steps>
+
+## Environment variable reference
+
+Here's the complete environment variable structure from `src/lib/env/env.server.ts:25-49`:
+
+```typescript
+export const appEnv = {
+  // Runtime Environment
+  APP_ENV: resolveAppEnv(),
+
+  // AI Configuration
+  GEMINI_API_KEY: requireEnv("GEMINI_API_KEY"),
+  DEFAULT_MODEL: optionalEnv("DEFAULT_MODEL", "gemini-3-pro"),
+
+  // Sandbox Configuration
+  DAYTONA_API_KEY: requireEnv("DAYTONA_API_KEY"),
+
+  // ElevenLabs Voice Agent
+  ELEVENLABS_API_KEY: optionalEnv("ELEVENLABS_API_KEY"),
+  ELEVENLABS_AGENT_ID: optionalEnv("VITE_ELEVENLABS_AGENT_ID"),
+
+  // Unsplash
+  UNSPLASH_ACCESS_KEY: requireEnv("UNSPLASH_ACCESS_KEY"),
+  UNSPLASH_SECRET_KEY: requireEnv("UNSPLASH_SECRET_KEY"),
+
+  // Image CDN base URL
+  IMAGE_CDN_BASE_URL: optionalEnv("IMAGE_CDN_BASE_URL"),
+} as const;
+```
+
+<Tip>
+Never commit your `.env` file to version control. It should already be included in `.gitignore`.
+</Tip>

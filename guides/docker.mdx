@@ -1,0 +1,342 @@
+---
+title: Docker
+description: Build and run Viber using Docker containers
+---
+
+Viber includes Docker support for containerized deployment. This guide covers building and running Viber with Docker.
+
+## Quick start
+
+The fastest way to run Viber with Docker:
+
+```bash
+./docker.sh
+```
+
+This convenience script builds the image, manages containers, and tests API routes automatically.
+
+## Manual Docker setup
+
+For more control over the Docker build and run process:
+
+<Steps>
+  <Step title="Build the Docker image">
+    ```bash
+    docker build -t viber .
+    ```
+
+    This builds the production image using the multi-stage Dockerfile.
+  </Step>
+
+  <Step title="Run the container">
+    ```bash
+    docker run --rm -p 3000:3000 \
+      -e GEMINI_API_KEY=your_key \
+      -e DAYTONA_API_KEY=your_key \
+      -e UNSPLASH_ACCESS_KEY=your_key \
+      -e UNSPLASH_SECRET_KEY=your_key \
+      viber
+    ```
+  </Step>
+
+  <Step title="Access the application">
+    Open your browser to:
+
+    ```
+    http://localhost:3000
+    ```
+  </Step>
+</Steps>
+
+## Understanding the Dockerfile
+
+Viber uses a multi-stage Dockerfile for optimized builds:
+
+### Stage 1: Base image
+
+```dockerfile Dockerfile:1-2
+FROM oven/bun:1 AS base
+WORKDIR /app
+```
+
+Uses the official Bun runtime image as the foundation.
+
+### Stage 2: Install dependencies
+
+```dockerfile Dockerfile:4-7
+FROM base AS install
+RUN mkdir -p /temp/dev
+COPY package.json bun.lock* /temp/dev/
+RUN cd /temp/dev && bun install --frozen-lockfile
+```
+
+Installs dependencies in isolation for better caching.
+
+### Stage 3: Build application
+
+```dockerfile Dockerfile:9-15
+FROM base AS prerelease
+COPY --from=install /temp/dev/node_modules node_modules
+COPY . .
+
+ENV NODE_ENV=production
+ENV VITE_ELEVENLABS_AGENT_ID=agent_5901kch85sfye06s56m7kshw9kf4
+RUN rm -rf .output && bun run build
+```
+
+<Warning>
+The `VITE_ELEVENLABS_AGENT_ID` is hardcoded in the Dockerfile. To use your own agent ID, modify this value before building or use a build argument.
+</Warning>
+
+### Stage 4: Production runtime
+
+```dockerfile Dockerfile:17-27
+FROM base AS release
+ENV NODE_ENV=production
+ENV HOST=0.0.0.0
+ENV PORT=3000
+
+COPY --from=prerelease /app/.output /app/.output
+COPY --from=prerelease /app/public /app/public
+
+EXPOSE 3000
+
+CMD ["bun", "--bun", ".output/server/index.mjs"]
+```
+
+The final stage contains only the built application and necessary runtime files.
+
+## Environment variables
+
+### Required variables
+
+```bash
+docker run --rm -p 3000:3000 \
+  -e GEMINI_API_KEY=your_gemini_api_key \
+  -e DAYTONA_API_KEY=your_daytona_api_key \
+  -e UNSPLASH_ACCESS_KEY=your_unsplash_access_key \
+  -e UNSPLASH_SECRET_KEY=your_unsplash_secret_key \
+  viber
+```
+
+### Optional variables
+
+Add optional configuration:
+
+```bash
+docker run --rm -p 3000:3000 \
+  -e GEMINI_API_KEY=your_key \
+  -e DAYTONA_API_KEY=your_key \
+  -e UNSPLASH_ACCESS_KEY=your_key \
+  -e UNSPLASH_SECRET_KEY=your_key \
+  -e ELEVENLABS_API_KEY=your_elevenlabs_key \
+  -e DEFAULT_MODEL=gemini-2.5-pro \
+  -e IMAGE_CDN_BASE_URL=https://your-domain.com \
+  viber
+```
+
+### Using an environment file
+
+For easier management, create a `.env.docker` file:
+
+```bash .env.docker
+GEMINI_API_KEY=your_gemini_api_key
+DAYTONA_API_KEY=your_daytona_api_key
+UNSPLASH_ACCESS_KEY=your_unsplash_access_key
+UNSPLASH_SECRET_KEY=your_unsplash_secret_key
+ELEVENLABS_API_KEY=your_elevenlabs_api_key
+DEFAULT_MODEL=gemini-2.5-pro
+IMAGE_CDN_BASE_URL=https://your-domain.com
+```
+
+Then run with:
+
+```bash
+docker run --rm -p 3000:3000 --env-file .env.docker viber
+```
+
+<Tip>
+Add `.env.docker` to your `.gitignore` to avoid committing sensitive credentials.
+</Tip>
+
+## The convenience script
+
+The included `docker.sh` script automates the build and run process:
+
+```bash docker.sh:1-20
+#!/bin/bash
+
+set -e
+
+CONTAINER_NAME="viber"
+IMAGE_NAME="viber"
+PORT=${PORT:-3000}
+
+echo "🔨 Building Docker image..."
+docker build -t $IMAGE_NAME .
+
+echo "🛑 Stopping and removing existing container (if any)..."
+docker stop $CONTAINER_NAME 2>/dev/null || true
+docker rm $CONTAINER_NAME 2>/dev/null || true
+
+echo "🚀 Starting new container..."
+docker run -d \
+  --name $CONTAINER_NAME \
+  -p $PORT:3000 \
+  $IMAGE_NAME
+```
+
+### What the script does
+
+<Steps>
+  <Step title="Builds the image">
+    Runs `docker build -t viber .`
+  </Step>
+
+  <Step title="Cleans up existing containers">
+    Stops and removes any existing container named "viber"
+  </Step>
+
+  <Step title="Starts the container">
+    Launches a new container in detached mode on port 3000
+  </Step>
+
+  <Step title="Tests API routes">
+    Verifies the application is running by testing `/api/test` and `/api/health` endpoints
+  </Step>
+</Steps>
+
+### Customizing the script
+
+Override the port:
+
+```bash
+PORT=8080 ./docker.sh
+```
+
+To add environment variables to the script, modify the `docker run` command:
+
+```bash docker.sh
+docker run -d \
+  --name $CONTAINER_NAME \
+  -p $PORT:3000 \
+  -e GEMINI_API_KEY=your_key \
+  -e DAYTONA_API_KEY=your_key \
+  --env-file .env.docker \
+  $IMAGE_NAME
+```
+
+## Container management
+
+### View logs
+
+```bash
+docker logs -f viber
+```
+
+### Stop the container
+
+```bash
+docker stop viber
+```
+
+### Remove the container
+
+```bash
+docker rm viber
+```
+
+### List running containers
+
+```bash
+docker ps
+```
+
+### Execute commands in the container
+
+```bash
+docker exec -it viber /bin/bash
+```
+
+## Docker Compose
+
+For a complete Docker Compose setup, create a `docker-compose.yml`:
+
+```yaml docker-compose.yml
+version: '3.8'
+
+services:
+  viber:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - DAYTONA_API_KEY=${DAYTONA_API_KEY}
+      - UNSPLASH_ACCESS_KEY=${UNSPLASH_ACCESS_KEY}
+      - UNSPLASH_SECRET_KEY=${UNSPLASH_SECRET_KEY}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - DEFAULT_MODEL=${DEFAULT_MODEL:-gemini-3-pro}
+      - IMAGE_CDN_BASE_URL=${IMAGE_CDN_BASE_URL}
+    restart: unless-stopped
+```
+
+Run with:
+
+```bash
+docker-compose up -d
+```
+
+## Troubleshooting
+
+### Container exits immediately
+
+<Accordion title="Check for missing environment variables">
+  The application requires `GEMINI_API_KEY`, `DAYTONA_API_KEY`, `UNSPLASH_ACCESS_KEY`, and `UNSPLASH_SECRET_KEY`. Verify these are set:
+
+  ```bash
+  docker logs viber
+  ```
+
+  Look for error messages about missing environment variables.
+</Accordion>
+
+### Port already in use
+
+<Accordion title="Change the host port mapping">
+  If port 3000 is already in use, map to a different port:
+
+  ```bash
+  docker run --rm -p 8080:3000 \
+    -e GEMINI_API_KEY=... \
+    viber
+  ```
+
+  Access at `http://localhost:8080`
+</Accordion>
+
+### Build fails
+
+<Accordion title="Clear Docker cache and rebuild">
+  ```bash
+  docker build --no-cache -t viber .
+  ```
+</Accordion>
+
+### Client-side environment variable not working
+
+<Accordion title="Rebuild with correct VITE_ELEVENLABS_AGENT_ID">
+  Client-side environment variables are compiled during build. Modify the Dockerfile before building:
+
+  ```dockerfile
+  ENV VITE_ELEVENLABS_AGENT_ID=your_actual_agent_id
+  RUN rm -rf .output && bun run build
+  ```
+
+  Then rebuild:
+
+  ```bash
+  docker build -t viber .
+  ```
+</Accordion>

@@ -1,0 +1,566 @@
+---
+title: Sandbox
+description: Daytona sandbox management, file operations, and dev server configuration
+---
+
+Viber uses Daytona sandboxes to execute generated code in isolated environments. Each sandbox runs a Vite dev server with hot module replacement (HMR) enabled.
+
+## Sandbox lifecycle
+
+<Steps>
+  <Step title="Create sandbox">
+    Initialize a new Daytona sandbox from a pre-configured snapshot
+  </Step>
+  
+  <Step title="Setup application">
+    Create the initial Vite project structure with React and TypeScript
+  </Step>
+  
+  <Step title="Start dev server">
+    Launch Vite dev server on port 5173 with HMR over WebSocket
+  </Step>
+  
+  <Step title="Apply files">
+    Write generated files to the sandbox and watch HMR update the preview
+  </Step>
+  
+  <Step title="Destroy sandbox">
+    Clean up resources when the session ends
+  </Step>
+</Steps>
+
+## Sandbox provider
+
+The `DaytonaSandbox` class wraps the Daytona SDK:
+
+```typescript src/lib/sandbox/daytona.provider.ts
+import { Daytona, Sandbox } from "@daytonaio/sdk";
+
+export class DaytonaSandbox {
+  private daytona: Daytona;
+  private sandbox: Sandbox | null = null;
+  private info: SandboxInfo | null = null;
+
+  constructor(apiKey?: string) {
+    this.daytona = new Daytona({
+      apiKey: apiKey || appEnv.DAYTONA_API_KEY,
+    });
+  }
+
+  async create(): Promise<SandboxInfo> {
+    this.sandbox = await this.daytona.create({
+      snapshot: SNAPSHOT_NAME,
+      public: true,
+      autoStopInterval: 60, // minutes
+      autoDeleteInterval: 120, // minutes
+    });
+
+    this.info = {
+      sandboxId: this.sandbox.id,
+      url: this.buildPreviewUrl(this.sandbox.id),
+      createdAt: new Date(),
+    };
+
+    return this.info;
+  }
+
+  async destroy(): Promise<void> {
+    if (this.sandbox) {
+      await this.sandbox.delete();
+      this.sandbox = null;
+      this.info = null;
+    }
+  }
+}
+```
+
+### Configuration
+
+Sandbox settings are defined in the app config:
+
+```typescript
+const appConfig = {
+  daytona: {
+    snapshotName: "viber-react-vite",
+    workingDirectory: "/workspace/vibe-project",
+    devPort: 5173,
+    previewProxyDomain: "proxy.daytona.works",
+    autoStopIntervalMinutes: 60,
+    autoDeleteIntervalMinutes: 120,
+    devStartupDelay: 3000, // ms
+    devRestartDelay: 2000, // ms
+  },
+};
+```
+
+## Preview URL construction
+
+Each sandbox gets a unique preview URL:
+
+```typescript src/lib/sandbox/daytona.provider.ts
+private buildPreviewUrl(sandboxId: string): string {
+  if (PREVIEW_PROXY_DOMAIN) {
+    return `https://${DEV_PORT}-${sandboxId}.${PREVIEW_PROXY_DOMAIN}`;
+  }
+  return `https://${DEV_PORT}-${sandboxId}.proxy.daytona.works`;
+}
+
+// Example: https://5173-abc123.proxy.daytona.works
+```
+
+<Note>
+The preview URL uses a subdomain pattern: `{port}-{sandboxId}.{domain}`. This enables multiple sandboxes to run simultaneously.
+</Note>
+
+## Application setup
+
+When a sandbox is created, Viber initializes a Vite project:
+
+```typescript src/lib/sandbox/daytona.provider.ts
+async setupApp(): Promise<void> {
+  // Create directory structure
+  await this.sandbox.process.executeCommand(
+    `mkdir -p ${WORKING_DIR}/src`,
+    WORKING_DIR
+  );
+
+  // Write index.html
+  await this.write(
+    "index.html",
+    `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sandbox App</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/index.tsx"></script>
+  </body>
+</html>`
+  );
+
+  // Write src/index.tsx
+  await this.write(
+    "src/index.tsx",
+    `import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App'
+import './index.css'
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+)`
+  );
+
+  // Write src/App.tsx (placeholder)
+  await this.write(
+    "src/App.tsx",
+    `function App() {
+  return (
+    <div className="min-h-screen bg-white flex items-center justify-center">
+      <h1 className="text-3xl">Ready to build</h1>
+    </div>
+  )
+}
+
+export default App`
+  );
+
+  // Write src/index.css
+  await this.write(
+    "src/index.css",
+    `@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: "Lora", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}`
+  );
+
+  // Write vite.config.ts
+  await this.write(
+    "vite.config.ts",
+    `import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+  server: {
+    host: '0.0.0.0',
+    port: ${DEV_PORT},
+    strictPort: true,
+    allowedHosts: true,
+    hmr: {
+      protocol: 'wss',
+      host: '${hmrHost}',
+      clientPort: 443,
+      timeout: 30000,
+    },
+    watch: {
+      usePolling: true,
+      interval: 100,
+    },
+  },
+})`
+  );
+
+  // Start dev server
+  await this.sandbox.process.createSession(DEV_SESSION_ID);
+  await this.sandbox.process.executeSessionCommand(DEV_SESSION_ID, {
+    command: "bun run dev",
+    runAsync: true,
+  });
+
+  // Wait for server to start
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+}
+```
+
+<Tabs>
+  <Tab title="Vite config">
+    Key HMR settings for Daytona:
+    
+    ```typescript
+    hmr: {
+      protocol: 'wss', // WebSocket Secure
+      host: '5173-abc123.proxy.daytona.works',
+      clientPort: 443, // HTTPS port
+      timeout: 30000,
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Watch config">
+    File watching in remote environment:
+    
+    ```typescript
+    watch: {
+      usePolling: true, // Required for remote filesystems
+      interval: 100, // Check every 100ms
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Dev server">
+    Bun is used to run the Vite dev server:
+    
+    ```typescript
+    await sandbox.process.executeSessionCommand(DEV_SESSION_ID, {
+      command: "bun run dev",
+      runAsync: true, // Don't block
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## File operations
+
+### Write files
+
+```typescript src/lib/sandbox/daytona.provider.ts
+async write(path: string, content: string): Promise<void> {
+  if (!this.sandbox) {
+    throw new Error("No active sandbox");
+  }
+
+  const fullPath = path.startsWith("/") ? path : `${WORKING_DIR}/${path}`;
+  await this.sandbox.fs.uploadFile(Buffer.from(content), fullPath);
+}
+
+// Usage
+await sandbox.write("src/components/Hero.tsx", heroContent);
+```
+
+### Read files
+
+```typescript src/lib/sandbox/daytona.provider.ts
+async read(path: string): Promise<string> {
+  if (!this.sandbox) {
+    throw new Error("No active sandbox");
+  }
+
+  const fullPath = path.startsWith("/") ? path : `${WORKING_DIR}/${path}`;
+  const content = await this.sandbox.fs.downloadFile(fullPath);
+  return content.toString();
+}
+
+// Usage
+const heroContent = await sandbox.read("src/components/Hero.tsx");
+```
+
+### List files
+
+```typescript src/lib/sandbox/daytona.provider.ts
+async files(directory: string = WORKING_DIR): Promise<string[]> {
+  if (!this.sandbox) {
+    throw new Error("No active sandbox");
+  }
+
+  const excludePatterns = [
+    "node_modules",
+    ".git",
+    "dist",
+    "build",
+    "bun.lock",
+  ];
+
+  const result = await this.sandbox.process.executeCommand(
+    `find . -type f | grep -v -E '(node_modules|.git|dist|build|bun.lock)' | sed 's|^\\./||'`,
+    directory
+  );
+
+  return result.result
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .filter((f) => !excludePatterns.some((pattern) => f.includes(pattern)));
+}
+
+// Returns: ["src/App.tsx", "src/components/Hero.tsx", "index.html", ...]
+```
+
+## Package management
+
+```typescript src/lib/sandbox/daytona.provider.ts
+async install(packages: string[]): Promise<CommandResult> {
+  if (!this.sandbox) {
+    throw new Error("No active sandbox");
+  }
+
+  const result = await this.exec(`bun add ${packages.join(" ")}`);
+
+  // Auto-restart dev server after package installation
+  if (result.success && appConfig.packages.autoRestartVite) {
+    await this.restartDevServer();
+  }
+
+  return result;
+}
+
+// Usage
+await sandbox.install(["lucide-react", "clsx"]);
+```
+
+## Dev server management
+
+### Restart dev server
+
+```typescript src/lib/sandbox/daytona.provider.ts
+async restartDevServer(): Promise<void> {
+  if (!this.sandbox) {
+    throw new Error("No active sandbox");
+  }
+
+  // Delete existing session
+  try {
+    await this.sandbox.process.deleteSession(DEV_SESSION_ID);
+  } catch {
+    // Session might not exist
+  }
+
+  // Create new session
+  await this.sandbox.process.createSession(DEV_SESSION_ID);
+
+  // Start dev server
+  await this.sandbox.process.executeSessionCommand(DEV_SESSION_ID, {
+    command: "bun run dev",
+    runAsync: true,
+  });
+
+  // Wait for server to start
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+}
+```
+
+<Info>
+The dev server is automatically restarted after package installation to ensure new dependencies are loaded.
+</Info>
+
+## Diagnostics
+
+Viber can run TypeScript diagnostics to check for errors:
+
+```typescript src/lib/sandbox/daytona.provider.ts
+async runDiagnostics(): Promise<{ success: boolean; output: string }> {
+  if (!this.sandbox) {
+    throw new Error("No active sandbox");
+  }
+
+  // Run tsc to check for type errors and missing imports
+  const result = await this.exec(
+    "bun x tsc --noEmit --skipLibCheck --jsx react-jsx --esModuleInterop " +
+      "--target esnext --module esnext --moduleResolution bundle " +
+      "--noImplicitAny false --noUnusedLocals false --noUnusedParameters false " +
+      "--allowUnreachableCode true --allowUnusedLabels true --strict false"
+  );
+
+  return {
+    success: result.success,
+    output: result.stdout || result.stderr || "",
+  };
+}
+```
+
+## Sandbox manager
+
+Viber maintains a global registry of active sandboxes:
+
+```typescript src/lib/sandbox/manager.ts
+class SandboxManager {
+  private sandboxes = new Map<string, DaytonaSandbox>();
+  private activeSandboxId: string | null = null;
+
+  register(sandboxId: string, sandbox: DaytonaSandbox): void {
+    this.sandboxes.set(sandboxId, sandbox);
+    this.activeSandboxId = sandboxId;
+  }
+
+  get(sandboxId: string): DaytonaSandbox | null {
+    return this.sandboxes.get(sandboxId) || null;
+  }
+
+  getActive(): DaytonaSandbox | null {
+    return this.activeSandboxId
+      ? this.sandboxes.get(this.activeSandboxId) || null
+      : null;
+  }
+
+  async terminate(sandboxId: string): Promise<void> {
+    const sandbox = this.sandboxes.get(sandboxId);
+    if (sandbox) {
+      await sandbox.destroy();
+      this.sandboxes.delete(sandboxId);
+      if (this.activeSandboxId === sandboxId) {
+        this.activeSandboxId = null;
+      }
+    }
+  }
+
+  async terminateAll(): Promise<void> {
+    for (const [sandboxId, sandbox] of this.sandboxes) {
+      await sandbox.destroy();
+    }
+    this.sandboxes.clear();
+    this.activeSandboxId = null;
+  }
+}
+
+export const sandboxManager = new SandboxManager();
+```
+
+## API endpoints
+
+<CodeGroup>
+```typescript Create sandbox
+// POST /api/sandbox/create
+export const Route = createFileRoute("/api/sandbox/create")({
+  server: {
+    handlers: {
+      POST: async () => {
+        const result = await createNewSandbox();
+        return Response.json({
+          success: true,
+          sandboxId: result.sandboxId,
+          url: result.url,
+        });
+      },
+    },
+  },
+});
+```
+
+```typescript Get files
+// GET /api/sandbox/files?sandboxId=abc123
+export const Route = createFileRoute("/api/sandbox/files")({
+  server: {
+    handlers: {
+      GET: async ({ request }) => {
+        const url = new URL(request.url);
+        const sandboxId = url.searchParams.get("sandboxId");
+        const result = await getSandboxFiles(sandboxId);
+        return Response.json(result);
+      },
+    },
+  },
+});
+```
+
+```typescript Kill sandbox
+// POST /api/sandbox/kill
+export const Route = createFileRoute("/api/sandbox/kill")({
+  server: {
+    handlers: {
+      POST: async ({ request }) => {
+        const { sandboxId } = await request.json();
+        await killSandbox(sandboxId);
+        return Response.json({ success: true });
+      },
+    },
+  },
+});
+```
+</CodeGroup>
+
+## Best practices
+
+<AccordionGroup>
+  <Accordion title="Use polling for file watching">
+    Remote filesystems require polling instead of native file watching:
+    
+    ```typescript
+    watch: {
+      usePolling: true,
+      interval: 100,
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Configure HMR for proxy">
+    Set the correct HMR host for WebSocket connections:
+    
+    ```typescript
+    hmr: {
+      protocol: 'wss',
+      host: '5173-abc123.proxy.daytona.works',
+      clientPort: 443,
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Wait for dev server startup">
+    Allow time for Vite to start before considering the sandbox ready:
+    
+    ```typescript
+    await sandbox.setupApp();
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    ```
+  </Accordion>
+  
+  <Accordion title="Restart after package installation">
+    Vite needs to restart to load new dependencies:
+    
+    ```typescript
+    await sandbox.install(["lucide-react"]);
+    // Dev server automatically restarts
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Voice agent" icon="microphone" href="/architecture/voice-agent">
+    Learn how voice triggers code generation
+  </Card>
+  
+  <Card title="Code agent" icon="code" href="/architecture/code-agent">
+    Explore Gemini code generation
+  </Card>
+</CardGroup>
